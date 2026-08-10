@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:297733501497:android:6394e97bc65a62417953e8",
+        "mobilesdk_app_id": "1:297733501497:android:03206cccf81f7adb7953e8",
         "android_client_info": {
-          "package_name": "com.example.citofono"
+          "package_name": "com.gladiator.interfonia"
         }
       },
       "oauth_client": [],
