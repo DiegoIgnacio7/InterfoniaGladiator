@@ -12,8 +12,10 @@ import 'widgets/mensajes_modal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'dart:ui';
+import 'firebase_options.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 Future<void> openMessagesFromNotification({String? peerRut}) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setBool(kOpenMessagesPendingKey, true);
@@ -49,20 +51,10 @@ class MyHttpOverrides extends HttpOverrides {
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
-  
-  if (Platform.isIOS) {
-    await Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: 'AIzaSyCKLvyBn0Hfg6eQo-LZFgE2WdgnC-zUgyA', 
-        appId: '1:297733501497:ios:0fe2569a5069a0f17953e8', 
-        messagingSenderId: '297733501497', 
-        projectId: 'citofono-e2a73', 
-        iosBundleId: 'com.example.citofono', 
-      ),
-    );
-  } else {
-    await Firebase.initializeApp();
-  }
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
   final type = message.data['type'];
 
@@ -109,20 +101,9 @@ void main() async {
 
   try {
     HttpOverrides.global = MyHttpOverrides();
-    
-    if (Platform.isIOS) {
-      await Firebase.initializeApp(
-        options: const FirebaseOptions(
-          apiKey: 'AIzaSyCKLvyBn0Hfg6eQo-LZFgE2WdgnC-zUgyA', 
-          appId: '1:297733501497:ios:0fe2569a5069a0f17953e8', 
-          messagingSenderId: '297733501497', 
-          projectId: 'citofono-e2a73', 
-          iosBundleId: 'com.example.citofono', 
-        ),
-      );
-    } else {
-      await Firebase.initializeApp();
-    }
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
 
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
