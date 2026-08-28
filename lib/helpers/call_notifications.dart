@@ -40,17 +40,7 @@ class CallNotifications {
   }) async {
     if (!_initialized) {
       const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-      const iosSettings = DarwinInitializationSettings(
-        requestAlertPermission: true,
-        requestBadgePermission: true,
-        requestSoundPermission: true,
-      );
-
-      const initSettings = InitializationSettings(
-        android: androidSettings,
-        iOS: iosSettings,
-      );
-      
+      const initSettings = InitializationSettings(android: androidSettings);
       await callNotificationsPlugin.initialize(
         initSettings,
         onDidReceiveNotificationResponse: onResponse,
@@ -90,12 +80,6 @@ class CallNotifications {
           color: const Color(0xFF448AFF),
           icon: '@mipmap/ic_launcher',
         ),
-        // Ajustes visuales añadidos para iOS
-        iOS: const DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: true,
-        ),
       ),
     );
   }
@@ -128,12 +112,6 @@ class CallNotifications {
           color: const Color(0xFFFF5252),
           icon: '@mipmap/ic_launcher',
         ),
-        // Ajustes visuales añadidos para iOS
-        iOS: const DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: true,
-        ),
       ),
     );
   }
@@ -164,12 +142,6 @@ class CallNotifications {
           autoCancel: true,
           color: const Color(0xFF448AFF),
           icon: '@mipmap/ic_launcher',
-        ),
-        // Ajustes visuales añadidos para iOS
-        iOS: const DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: true,
         ),
       ),
       payload: peerRut == null || peerRut.isEmpty ? 'chat_message' : 'chat_message:$peerRut',

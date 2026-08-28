@@ -88,8 +88,8 @@ class _DirectorioModalState extends State<DirectorioModal> {
       minChildSize: 0.5,
       builder: (_, scrollCtrl) => Container(
         decoration: const BoxDecoration(
-          color: Color(0xFF11111B),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          color: Color(0xFF0F172A),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
         child: Column(
           children: [

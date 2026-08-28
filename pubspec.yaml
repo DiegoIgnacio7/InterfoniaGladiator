@@ -1,7 +1,7 @@
 name: citofono_app
 description: App de Intercomunicador con videollamadas WebRTC y Firebase
 publish_to: 'none'
-version: 1.0.14+23
+version: 2.0.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -32,18 +32,12 @@ dependencies:
   # Notificaciones locales
   flutter_local_notifications: ^18.0.1
   image_picker: ^1.2.2
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
-  flutter_launcher_icons: ^0.13.1
-
-flutter_launcher_icons:
-  android: "launcher_icon"
-  ios: true
-  image_path: "assets/LogoGladiatorAzul.png"
-  remove_alpha_ios: true
 
 flutter:
   uses-material-design: true

@@ -12,10 +12,8 @@ import 'widgets/mensajes_modal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'dart:ui';
-import 'firebase_options.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
 Future<void> openMessagesFromNotification({String? peerRut}) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setBool(kOpenMessagesPendingKey, true);
@@ -51,10 +49,7 @@ class MyHttpOverrides extends HttpOverrides {
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
-
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp();
 
   final type = message.data['type'];
 
@@ -98,48 +93,24 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  HttpOverrides.global = MyHttpOverrides();
+  await Firebase.initializeApp();
 
-  try {
-    HttpOverrides.global = MyHttpOverrides();
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  await CallNotifications.ensureInitialized(
+    onResponse: (response) {
+      final payload = response.payload ?? '';
+      if (payload.startsWith('chat_message')) {
+        openMessagesFromNotification();
+        return;
+      }
+      FlutterRingtonePlayer().stop();
+      CallNotifications.cancelIncoming();
+    },
+  );
 
-    await CallNotifications.ensureInitialized(
-      onResponse: (response) {
-        final payload = response.payload ?? '';
-        if (payload.startsWith('chat_message')) {
-          openMessagesFromNotification();
-          return;
-        }
-        FlutterRingtonePlayer().stop();
-        CallNotifications.cancelIncoming();
-      },
-    );
-    
-    runApp(const CitofonoApp());
-
-  } catch (error, stackTrace) {
-    runApp(
-      MaterialApp(
-        debugShowCheckedModeBanner: false,
-        home: Scaffold(
-          backgroundColor: Colors.red,
-          body: SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
-              child: Text(
-                "ERROR DE INICIO FATAL:\n\n$error\n\n$stackTrace",
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  runApp(const CitofonoApp());
 }
 
 class CitofonoApp extends StatefulWidget {
@@ -259,12 +230,20 @@ class _CitofonoAppState extends State<CitofonoApp> {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF448AFF),
+          seedColor: const Color(0xFF6366F1),
           brightness: Brightness.dark,
+          surface: const Color(0xFF151C2C),
+          primary: const Color(0xFF6366F1),
+          secondary: const Color(0xFF06B6D4),
         ),
-        scaffoldBackgroundColor: const Color(0xFF11111B),
+        scaffoldBackgroundColor: const Color(0xFF0B0F19),
         fontFamily: 'Roboto',
         useMaterial3: true,
+        cardTheme: CardThemeData(
+          color: const Color(0xFF151C2C),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          elevation: 2,
+        ),
       ),
       home: const LoginScreen(),
     );

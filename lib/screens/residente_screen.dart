@@ -12,10 +12,12 @@ import '../helpers/citofono_call_utils.dart';
 import '../helpers/call_notifications.dart';
 import 'login_screen.dart';
 import '../widgets/directorio_modal.dart';
+import '../widgets/dialer_modal.dart';
 import '../widgets/historial_modal.dart';
 import '../widgets/mensajes_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ResidenteScreen extends StatefulWidget {
   const ResidenteScreen({super.key});
@@ -337,14 +339,16 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
     );
 
     try {
+      final String targetDpto = (rut == '99999999' || rut.toUpperCase() == 'CONSERJERÍA' || rut == '000') ? '000' : rut;
       final res = await http.post(
         Uri.parse('$kBaseUrl/llamar'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'rut': rut,
+          'id_dpto': targetDpto,
           'tipo': tipo,
           'caller_rut': miRut,
-          'caller_dpto': 'Depto',
+          'caller_dpto': miDpto.isNotEmpty ? miDpto : 'Depto',
         }),
       ).timeout(const Duration(seconds: 10));
 
@@ -420,6 +424,81 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
     } catch (_) {}
   }
 
+  void _abrirDialer() async {
+    await _cargarOcupados();
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DialerModal(
+        miRut: miRut,
+        rutosOcupados: rutosOcupados,
+        onLlamar: _llamar,
+      ),
+    );
+  }
+
+  void _abrirConfigWifiEsp32() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF222233),
+        title: const Row(
+          children: [
+            Icon(Icons.wifi_find_rounded, color: Color(0xFF448AFF)),
+            SizedBox(width: 10),
+            Text('Configurar Wi-Fi Citófono', style: TextStyle(color: Colors.white, fontSize: 18)),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '1. Mantén presionado el botón de tu citófono por 5 segundos hasta que parpadee.',
+              style: TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            SizedBox(height: 8),
+            Text(
+              '2. Conecta tu celular a la red Wi-Fi "Citofono-Config".',
+              style: TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            SizedBox(height: 8),
+            Text(
+              '3. Presiona "Abrir Portal" para guardar tu nueva clave de internet.',
+              style: TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF448AFF)),
+            onPressed: () async {
+              Navigator.pop(context);
+              final uri = Uri.parse('http://192.168.4.1');
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              } else {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Abre tu navegador e ingresa a http://192.168.4.1')),
+                  );
+                }
+              }
+            },
+            icon: const Icon(Icons.open_in_browser_rounded, color: Colors.white),
+            label: const Text('Abrir Portal (192.168.4.1)', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _abrirDirectorio() async {
     await _cargarOcupados();
     if (!mounted) return;
@@ -471,109 +550,391 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF0B0F19),
       body: Stack(
         children: [
-          Container(
-            decoration: BoxDecoration(
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF448AFF).withOpacity(0.3),
-                  blurRadius: 80,
-                  spreadRadius: 20,
-                ),
-              ],
-            ),
-          ),
-          const Positioned(
-            top: 50,
-            left: 20,
-            child: Text('Inicio', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w300, color: Colors.white)),
-          ),
+          // Background ambient glows
           Positioned(
-            top: 40,
-            right: 15,
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.black45,
-                    borderRadius: BorderRadius.circular(12),
+            top: -80,
+            left: -40,
+            child: Container(
+              width: 300,
+              height: 300,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF6366F1).withOpacity(0.18),
+                    blurRadius: 120,
                   ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: _socketConectado ? Colors.green : Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        _socketConectado ? 'Conectado' : 'Desconectado',
-                        style: const TextStyle(color: Colors.white, fontSize: 10),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.grey),
-                  onPressed: _cerrarSesion,
-                ),
-              ],
-            ),
-          ),
-          Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Bienvenido a la app', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w300, color: Colors.white)),
-                const SizedBox(height: 10),
-                Text('RUT: $miRut', style: const TextStyle(color: Colors.grey, fontSize: 16)),
-                if (miDpto.isNotEmpty) ...[
-                  const SizedBox(height: 5),
-                  Text('Depto/Casa: $miDpto', style: const TextStyle(color: Colors.grey, fontSize: 16)),
                 ],
-                const SizedBox(height: 5),
-                const Text('Rol: Residente', style: TextStyle(color: Color(0xFF4CAF50), fontSize: 16)),
-              ],
-            ),
-          ),
-          Positioned(
-            bottom: 30,
-            left: 30,
-            child: FloatingActionButton(
-              heroTag: 'fab_historial',
-              backgroundColor: const Color(0xFF333344),
-              onPressed: _abrirHistorial,
-              child: const Icon(Icons.history_rounded, color: Colors.white),
-            ),
-          ),
-          Positioned(
-            bottom: 30,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: FloatingActionButton.extended(
-                heroTag: 'fab_mensajes',
-                backgroundColor: const Color(0xFF4CAF50),
-                onPressed: _abrirMensajes,
-                icon: const Icon(Icons.chat_bubble_rounded, color: Colors.white),
-                label: const Text('Mensajes', style: TextStyle(color: Colors.white)),
               ),
             ),
           ),
           Positioned(
-            bottom: 30,
-            right: 30,
-            child: FloatingActionButton(
-              heroTag: 'fab_directorio',
-              backgroundColor: const Color(0xFF448AFF),
-              onPressed: _abrirDirectorio,
-              child: const Icon(Icons.grid_view_rounded, color: Colors.white),
+            bottom: 40,
+            right: -60,
+            child: Container(
+              width: 280,
+              height: 280,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF06B6D4).withOpacity(0.15),
+                    blurRadius: 120,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Column(
+              children: [
+                // TOP HEADER BAR
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.apartment_rounded, color: Color(0xFF6366F1), size: 28),
+                          SizedBox(width: 10),
+                          Text(
+                            'Citofonía App',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF151C2C),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.white.withOpacity(0.08)),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: _socketConectado ? const Color(0xFF10B981) : const Color(0xFFFF5252),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _socketConectado ? 'En línea' : 'Desconectado',
+                                  style: TextStyle(
+                                    color: _socketConectado ? const Color(0xFF10B981) : Colors.white54,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: const Icon(Icons.logout_rounded, color: Colors.white54),
+                            onPressed: _cerrarSesion,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // PROFILE HERO CARD
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF1A2338), Color(0xFF151C2C)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(color: Colors.white.withOpacity(0.08)),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.3),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 28,
+                                backgroundColor: const Color(0xFF6366F1).withOpacity(0.2),
+                                child: const Icon(Icons.home_work_rounded, color: Color(0xFF6366F1), size: 30),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      miNombre.isNotEmpty ? miNombre : 'Residente',
+                                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text('RUT: $miRut', style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                                    const SizedBox(height: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF6366F1).withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        miDpto.isNotEmpty ? 'Departamento $miDpto' : 'Residencia Activa',
+                                        style: const TextStyle(color: Color(0xFF818CF8), fontSize: 12, fontWeight: FontWeight.w600),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        const Text(
+                          'Acciones Rápida',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
+                        ),
+                        const SizedBox(height: 14),
+                        // 2x2 FEATURE CARDS GRID
+                        GridView.count(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 14,
+                          mainAxisSpacing: 14,
+                          childAspectRatio: 1.2,
+                          children: [
+                            // CARD 1: MARCAR DEPARTAMENTO
+                            InkWell(
+                              onTap: _abrirDialer,
+                              borderRadius: BorderRadius.circular(20),
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  borderRadius: BorderRadius.circular(20),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(0xFF6366F1).withOpacity(0.35),
+                                      blurRadius: 14,
+                                      offset: const Offset(0, 6),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.2),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.dialpad_rounded, color: Colors.white, size: 24),
+                                    ),
+                                    const Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Marcar Depto', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                                        SizedBox(height: 2),
+                                        Text('Intercomunicador', style: TextStyle(fontSize: 11, color: Colors.white70)),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // CARD 2: LLAMAR CONSERJERÍA
+                            InkWell(
+                              onTap: () => _llamar('000', 'audio'),
+                              borderRadius: BorderRadius.circular(20),
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF151C2C),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: const Color(0xFF10B981).withOpacity(0.4)),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.2),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF10B981).withOpacity(0.2),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.support_agent_rounded, color: Color(0xFF10B981), size: 24),
+                                    ),
+                                    const Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Conserjería', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                                        SizedBox(height: 2),
+                                        Text('Llamada Directa', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // CARD 3: CHAT MENSAJES
+                            InkWell(
+                              onTap: _abrirMensajes,
+                              borderRadius: BorderRadius.circular(20),
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF151C2C),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.2),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF8B5CF6).withOpacity(0.2),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF8B5CF6), size: 24),
+                                    ),
+                                    const Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Mensajes', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                                        SizedBox(height: 2),
+                                        Text('Chat Residencial', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // CARD 4: WI-FI ESP32
+                            InkWell(
+                              onTap: _abrirConfigWifiEsp32,
+                              borderRadius: BorderRadius.circular(20),
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF151C2C),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.2),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF0EA5E9).withOpacity(0.2),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.wifi_rounded, color: Color(0xFF0EA5E9), size: 24),
+                                    ),
+                                    const Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Config Wi-Fi', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                                        SizedBox(height: 2),
+                                        Text('Soporte Citófono', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        // QUICK NAV FOOTER BAR
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: Colors.white.withOpacity(0.12)),
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                ),
+                                onPressed: _abrirHistorial,
+                                icon: const Icon(Icons.history_rounded, color: Colors.white70),
+                                label: const Text('Historial', style: TextStyle(color: Colors.white70)),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: Colors.white.withOpacity(0.12)),
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                ),
+                                onPressed: _abrirDirectorio,
+                                icon: const Icon(Icons.contacts_rounded, color: Colors.white70),
+                                label: const Text('Directorio', style: TextStyle(color: Colors.white70)),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
