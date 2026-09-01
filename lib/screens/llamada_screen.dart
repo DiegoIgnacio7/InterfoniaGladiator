@@ -35,6 +35,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
   MediaStream? _localStream;
   String _status = 'Conectando...';
   bool _callEnded = false;
+  DateTime? _connectedAt;
   late IO.Socket _socket;
   Timer? _timeoutTimer;
 
@@ -138,6 +139,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
       if (event.streams.isNotEmpty) {
         setState(() {
           _remoteRenderer.srcObject = event.streams[0];
+          _connectedAt ??= DateTime.now();
           _status = 'Llamada conectada';
         });
       }
@@ -181,6 +183,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
       await _peerConnection!.setLocalDescription(answer);
       _socket.emit('answer', {'room': widget.room, 'sdp': answer.toMap()});
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Answer enviado!')));
+      _connectedAt ??= DateTime.now();
       if (mounted) setState(() => _status = 'Llamada conectada');
     });
 
@@ -189,6 +192,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
       await _peerConnection!.setRemoteDescription(
         RTCSessionDescription(data['sdp']['sdp'], data['sdp']['type']),
       );
+      _connectedAt ??= DateTime.now();
       if (mounted) setState(() => _status = 'Llamada conectada');
     });
 
@@ -273,7 +277,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
           'rut_receptor': widget.isCaller ? widget.rutDestino : widget.miRut,
           'tipo_llamada': widget.tipo,
           'estado': (widget.isCaller && _status != 'Llamada conectada') ? 'perdida' : 'finalizada',
-          'duracion_segundos': 0,
+          'duracion_segundos': _connectedAt == null ? 0 : DateTime.now().difference(_connectedAt!).inSeconds,
         }),
       );
     } catch (_) {}

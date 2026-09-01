@@ -97,43 +97,65 @@ class _HistorialModalState extends State<HistorialModal> {
                           itemCount: _historial.length,
                           itemBuilder: (_, i) {
                             final l = _historial[i];
-                            final esEmisor = l['rut_emisor'] == widget.miRut;
-                            final otroRut = esEmisor ? l['rut_receptor'] : l['rut_emisor'];
-                            final direccion = esEmisor ? 'Saliente a' : 'Entrante de';
-                            final estado = l['estado'] ?? 'finalizada';
-                            final fecha = l['fecha_hora'] != null
-                                ? DateTime.tryParse(l['fecha_hora'])?.toLocal()
-                                : null;
+                            final nombre = (l['nombre'] ?? 'Usuario desconocido').toString();
+                            final tipo = (l['tipo'] ?? 'Llamada').toString();
+                            final fecha = (l['fecha'] ?? '').toString();
+                            final estado = (l['estado'] ?? 'Finalizada').toString();
+                            final duracion = l['duracion_segundos'] ?? 0;
+
                             return Container(
                               margin: const EdgeInsets.only(bottom: 10),
-                              padding: const EdgeInsets.all(15),
+                              padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF222233),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: const Color(0xFF333344)),
+                                color: Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: _colorEstado(estado).withOpacity(0.25),
+                                ),
                               ),
                               child: Row(
                                 children: [
-                                  Icon(_iconEstado(estado), color: _colorEstado(estado), size: 28),
+                                  Container(
+                                    width: 42,
+                                    height: 42,
+                                    decoration: BoxDecoration(
+                                      color: _colorEstado(estado).withOpacity(0.15),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      tipo.toLowerCase().contains('saliente')
+                                          ? Icons.call_made_rounded
+                                          : Icons.call_received_rounded,
+                                      color: _colorEstado(estado),
+                                    ),
+                                  ),
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          '$direccion $otroRut',
-                                          style: TextStyle(color: _colorEstado(estado), fontSize: 15),
+                                          '$tipo · $nombre',
+                                          style: TextStyle(
+                                            color: _colorEstado(estado),
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
                                         const SizedBox(height: 3),
                                         Text(
-                                          fecha != null
-                                              ? '${fecha.day}/${fecha.month}/${fecha.year} ${fecha.hour}:${fecha.minute.toString().padLeft(2, '0')}'
-                                              : '',
-                                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                                          fecha,
+                                          style: const TextStyle(
+                                            color: Colors.grey,
+                                            fontSize: 12,
+                                          ),
                                         ),
                                         Text(
-                                          'Tipo: ${l['tipo_llamada']} | Estado: $estado | ${l['duracion_segundos']}s',
-                                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                                          'Estado: $estado · Duración: ${duracion}s',
+                                          style: const TextStyle(
+                                            color: Colors.grey,
+                                            fontSize: 12,
+                                          ),
                                         ),
                                       ],
                                     ),
