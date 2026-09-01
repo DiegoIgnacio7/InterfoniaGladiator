@@ -14,6 +14,7 @@ import 'dart:io';
 import 'dart:ui';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 Future<void> openMessagesFromNotification({String? peerRut}) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setBool(kOpenMessagesPendingKey, true);
@@ -90,26 +91,37 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 }
 
-
 void main() async {
+  // 1. Asegurar que el motor de Flutter esté listo
   WidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = MyHttpOverrides();
-  await Firebase.initializeApp();
 
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  // 2. Inicializar Firebase de forma segura
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  } catch (e) {
+    debugPrint('Error inicializando Firebase: $e');
+  }
 
-  await CallNotifications.ensureInitialized(
-    onResponse: (response) {
-      final payload = response.payload ?? '';
-      if (payload.startsWith('chat_message')) {
-        openMessagesFromNotification();
-        return;
-      }
-      FlutterRingtonePlayer().stop();
-      CallNotifications.cancelIncoming();
-    },
-  );
+  // 3. Inicializar Notificaciones de forma segura (Aquí suele ocurrir el crash en iOS)
+  try {
+    await CallNotifications.ensureInitialized(
+      onResponse: (response) {
+        final payload = response.payload ?? '';
+        if (payload.startsWith('chat_message')) {
+          openMessagesFromNotification();
+          return;
+        }
+        FlutterRingtonePlayer().stop();
+        CallNotifications.cancelIncoming();
+      },
+    );
+  } catch (e) {
+    debugPrint('Error crítico evitado en CallNotifications: $e');
+  }
 
+  // 4. ¡Garantizar que la interfaz gráfica siempre arranque!
   runApp(const CitofonoApp());
 }
 
