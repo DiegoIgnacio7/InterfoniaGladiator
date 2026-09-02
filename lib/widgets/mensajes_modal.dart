@@ -392,16 +392,65 @@ class _MensajesModalState extends State<MensajesModal> {
                             color: propio ? const Color(0xFF448AFF) : const Color(0xFF333344),
                             borderRadius: BorderRadius.circular(14),
                           ),
-                          child: m['es_imagen'] == true
-                              ? ClipRRect(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment:
+                            propio ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                            children: [
+                              if (m['es_imagen'] == true)
+                                ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
                                   child: Image.network(
                                     '$kBaseUrl${m['mensaje']}',
                                     fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image, color: Colors.white54),
+                                    errorBuilder: (context, error, stackTrace) =>
+                                    const Icon(
+                                      Icons.broken_image,
+                                      color: Colors.white54,
+                                    ),
                                   ),
                                 )
-                              : Text((m['mensaje'] ?? '').toString(), style: const TextStyle(color: Colors.white, fontSize: 15)),
+                              else
+                                Text(
+                                  (m['mensaje'] ?? '').toString(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                  ),
+                                ),
+
+                              // El estado solamente se muestra en mensajes enviados por mí.
+                              if (propio) ...[
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      m['leido'] == true || m['leido'] == 1
+                                          ? Icons.done_all_rounded
+                                          : Icons.done_rounded,
+                                      size: 16,
+                                      color: m['leido'] == true || m['leido'] == 1
+                                          ? const Color(0xFFB3E5FC)
+                                          : Colors.white60,
+                                    ),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      m['leido'] == true || m['leido'] == 1
+                                          ? 'Leído'
+                                          : 'No leído',
+                                      style: TextStyle(
+                                        color: m['leido'] == true || m['leido'] == 1
+                                            ? const Color(0xFFB3E5FC)
+                                            : Colors.white60,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       );
                     },
