@@ -175,7 +175,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 20),
                     const Center(
                       child: Text(
-                        'Citofonía Residencia',
+                        'Interfonia Residencia',
                         style: TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,

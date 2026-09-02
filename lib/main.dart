@@ -237,7 +237,7 @@ class _CitofonoAppState extends State<CitofonoApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Citófono',
+      title: 'Gladiator Interfonia',
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

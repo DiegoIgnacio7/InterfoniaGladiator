@@ -602,7 +602,7 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                           Icon(Icons.apartment_rounded, color: Color(0xFF6366F1), size: 28),
                           SizedBox(width: 10),
                           Text(
-                            'Citofonía App',
+                            'Gladiator Interfonia',
                             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
                           ),
                         ],
