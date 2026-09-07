@@ -51,7 +51,7 @@ class Usuario(db.Model):
     sexo = db.Column(db.String(20))
     fecha_nacimiento = db.Column(db.Date)
     fecha_registro = db.Column(db.Date)
-    id_dpto = db.Column(db.Integer)
+    id_dpto = db.Column(db.String(50))
     img_perfil = db.Column(db.String, default="default.png")
     es_admin = db.Column(db.Integer, default=0)
 
@@ -302,16 +302,16 @@ def _answer_citofono_call(call_id, answered_by='esp32'):
         device_id = _find_device_id_for_call(call_id)
         if not device_id:
             return None, 'Llamada no encontrada o expirada'
-        
+
         call = _expire_citofono_call_if_needed(device_id)
         if not call:
             return None, 'Llamada expirada'
-            
+
         if call.get('state') == 'active':
             return call.copy(), None
         if call.get('state') != 'ringing':
             return None, 'La llamada no está sonando'
-            
+
         call['state'] = 'active'
         call['answered_at'] = _utcnow()
         call['answered_by'] = answered_by
@@ -319,7 +319,7 @@ def _answer_citofono_call(call_id, answered_by='esp32'):
         out = call.copy()
     finally:
         _citofono_lock.release()
-        
+
     _set_user_busy_for_call(out, True)
     _emit_citofono_event(out, 'citofono-answered')
     _emit_citofono_event(out, 'citofono-call-state')
@@ -334,21 +334,21 @@ def _end_citofono_call(call_id=None, reason='finalizada', estado='finalizada', d
         device_id = target_device_id
         if not device_id and call_id:
             device_id = _find_device_id_for_call(call_id)
-            
+
         if not device_id:
             # Fallback if we don't know the device ID but need to clear by target
             for did, c in list(_citofono_calls.items()):
                 if c.get('call_id') == call_id or not call_id:
                     device_id = did
                     break
-                    
+
         if not device_id or device_id not in _citofono_calls:
             return None
-            
+
         call = _citofono_calls[device_id]
         if call_id and call.get('call_id') != call_id:
             return None
-            
+
         call['state'] = 'ended'
         call['ended_at'] = _utcnow()
         call['end_reason'] = reason
@@ -543,9 +543,9 @@ def llamar():
     caller_rut_raw = data.get("caller_rut", "")
     caller_rut = _norm_rut(caller_rut_raw)
     caller_dpto = data.get("caller_dpto", "") or ""
-    
+
     destino = str(data.get("destino", "ambos")).strip().lower() # app, kit, ambos
-    
+
     is_caller_citofono = _is_citofono_value(caller_rut_raw) or caller_rut == "99999999" or _is_citofono_value(caller_dpto)
 
     # --- NUEVO: Intercomunicación Total y Fix del ESP32 ---
@@ -556,9 +556,9 @@ def llamar():
         id_dpto_str = caller_dpto
         caller_dpto = "Citófono" # Corregimos el nombre para que la notificación diga "Citófono"
 
-    # Si viene un departamento de destino, resolvemos su RUT (Aplica para Apps y Citófono)
-    if id_dpto_str:
-        if id_dpto_str == "000":
+    # Si viene un departamento de destino o RUT, resolvemos el usuario de destino
+    if id_dpto_str or rut:
+        if id_dpto_str == "000" or rut == "000":
             # Llamar a Conserjería
             target_user = Usuario.query.filter_by(es_admin=True).first()
             if not target_user:
@@ -566,20 +566,22 @@ def llamar():
             rut = target_user.rut_usuario
             caller_dpto = caller_dpto or "Citófono"
         else:
-            # Llamar a un departamento
-            try:
-                dpto_num = int(id_dpto_str)
-            except ValueError:
-                return jsonify({"success": False, "error": "id_dpto inválido"}), 400
-            
-            # Priorizamos al residente
-            target_user = Usuario.query.filter_by(id_dpto=dpto_num, es_admin=False).first()
+            # 1. Si rut viene especificado y ya existe como usuario (ej: click desde el Directorio)
+            direct_user = Usuario.query.filter_by(rut_usuario=_norm_rut(rut)).first() if rut else None
+            if direct_user:
+                target_user = direct_user
+            else:
+                # 2. Buscar por departamento (priorizando residente)
+                target_user = Usuario.query.filter_by(id_dpto=id_dpto_str, es_admin=False).first()
+                if not target_user:
+                    target_user = Usuario.query.filter_by(id_dpto=id_dpto_str).first()
+                # 3. Fallback: buscar si id_dpto_str era en realidad un RUT
+                if not target_user:
+                    target_user = Usuario.query.filter_by(rut_usuario=_norm_rut(id_dpto_str)).first()
+
             if not target_user:
-                target_user = Usuario.query.filter_by(id_dpto=dpto_num).first()
-            
-            if not target_user:
-                return jsonify({"success": False, "error": f"No se encontró usuario para el departamento {id_dpto_str}"}), 404
-            
+                return jsonify({"success": False, "error": f"No se encontró usuario para el departamento {id_dpto_str or rut}"}), 404
+
             rut = target_user.rut_usuario
             caller_dpto = caller_dpto or "Citófono"
 
@@ -587,7 +589,7 @@ def llamar():
     caller_device_id = CITOFONO_DEVICE_ID if is_caller_citofono else caller_rut
 
     # Caso 1: Forzamos la llamada al KIT del destino
-    if destino == "kit" or _is_citofono_value(rut): 
+    if destino == "kit" or _is_citofono_value(rut):
         target_device_id = CITOFONO_DEVICE_ID if _is_citofono_value(rut) else rut
         return _start_citofono_call_from_app(caller_rut, caller_dpto, target_device_id, target_rut=rut)
 
@@ -604,14 +606,14 @@ def llamar():
 
     call_id = None
     caller_is_citofono = _is_citofono_value(caller_rut_raw) or _is_citofono_value(caller_dpto)
-    
+
     # Si el que llama es un Kit, registramos la llamada para que el Kit sepa el estado
     if tipo == "audio" and caller_is_citofono:
         call = _register_citofono_call_to_app(rut, caller_rut, caller_dpto, caller_device_id)
         call_id = call.get('call_id')
         caller_rut = CITOFONO_RUT
         caller_dpto = call.get('caller_dpto') or 'Citófono'
-        
+
     # Si el destino es "ambos", también registramos una llamada al Kit del destinatario
     if destino == "ambos" and not _is_citofono_value(rut):
         # Hacer sonar el kit del destino al mismo tiempo (usando el rut del destino como device_id)
@@ -636,6 +638,9 @@ def llamar():
 
     # 1. Emitir por socket a la App
     socketio.emit('incoming-call', socket_payload, to=rut)
+    norm_target = _norm_rut(rut)
+    if norm_target and norm_target != rut:
+        socketio.emit('incoming-call', socket_payload, to=norm_target)
 
     # 2. Notificar vía FCM
     if not token:
@@ -712,13 +717,8 @@ def usuarios_conserjes():
 
 @app.route("/usuarios-todos", methods=["GET"])
 def usuarios_todos():
-    rut = request.args.get("rut", "").strip().upper()
-    solicitante = Usuario.query.filter_by(rut_usuario=rut).first() if rut else None
-
-    if solicitante and solicitante.es_admin:
-        usuarios = Usuario.query.filter_by(es_admin=False).all()
-    else:
-        usuarios = Usuario.query.filter_by(es_admin=True).all()
+    # Se eliminaron los filtros: ahora se muestran todos los usuarios (residentes y conserjes)
+    usuarios = Usuario.query.all()
 
     return jsonify([{
         "rut_usuario": u.rut_usuario,
@@ -792,11 +792,94 @@ def chat_contactos():
     except Exception:
         unread_counts = {}
 
+    # Último mensaje enviado o recibido de cada contacto.
+    # Compatible con SQLAlchemy 1.3, 1.4 y 2.x.
+    last_message_by_contact = {}
+
+    try:
+        latest_ids_by_contact = {}
+
+        # Último mensaje enviado a cada contacto.
+        sent_rows = (
+            db.session.query(
+                ChatMensaje.rut_receptor,
+                db.func.max(ChatMensaje.id),
+            )
+            .filter(ChatMensaje.rut_emisor == rut)
+            .group_by(ChatMensaje.rut_receptor)
+            .all()
+        )
+
+        # Último mensaje recibido desde cada contacto.
+        received_rows = (
+            db.session.query(
+                ChatMensaje.rut_emisor,
+                db.func.max(ChatMensaje.id),
+            )
+            .filter(ChatMensaje.rut_receptor == rut)
+            .group_by(ChatMensaje.rut_emisor)
+            .all()
+        )
+
+        # Unir ambos sentidos y conservar el ID más reciente.
+        for contacto_value, message_id in sent_rows + received_rows:
+            contacto_key = _normaliza_chat_rut(contacto_value)
+
+            if not contacto_key or message_id is None:
+                continue
+
+            previous_id = latest_ids_by_contact.get(contacto_key)
+
+            if previous_id is None or message_id > previous_id:
+                latest_ids_by_contact[contacto_key] = message_id
+
+        message_ids = list(latest_ids_by_contact.values())
+
+        if message_ids:
+            last_message_rows = (
+                db.session.query(ChatMensaje)
+                .filter(ChatMensaje.id.in_(message_ids))
+                .all()
+            )
+
+            contact_by_message_id = {
+                message_id: contacto_key
+                for contacto_key, message_id
+                in latest_ids_by_contact.items()
+            }
+
+            for message in last_message_rows:
+                contacto_key = contact_by_message_id.get(message.id)
+
+                if not contacto_key:
+                    continue
+
+                payload = _chat_message_payload(message)
+                payload["is_mine"] = (
+                        _normaliza_chat_rut(message.rut_emisor) == rut
+                )
+
+                last_message_by_contact[contacto_key] = payload
+
+    except Exception:
+        app.logger.exception("Error cargando últimos mensajes")
+        db.session.rollback()
+        last_message_by_contact = {}
+
+    contactos = [
+        _usuario_chat_payload(
+            usuario,
+            unread_counts.get(_normaliza_chat_rut(usuario.rut_usuario),0,),
+            last_message_by_contact.get(_normaliza_chat_rut(usuario.rut_usuario),),
+        )
+        for usuario in usuarios
+    ]
+
     return jsonify({
         'success': True,
         'rut': rut,
         'unidad_label': _usuario_chat_payload(solicitante).get('unidad_label'),
-        'contactos': [_usuario_chat_payload(u, unread_counts.get(u.rut_usuario, 0)) for u in usuarios],
+        'contactos': contactos,
     })
 
 
@@ -1012,7 +1095,7 @@ def obtener_historial():
     rut = request.args.get("rut", "").strip().upper()
     if not rut:
         return jsonify({"error": "Falta el RUT"}), 400
-    
+
     usuario = Usuario.query.filter_by(rut_usuario=rut).first()
     if not usuario:
         return jsonify({"error": "Usuario no encontrado"}), 404
@@ -1027,15 +1110,15 @@ def obtener_historial():
     resultado = []
     for l in llamadas:
         direccion = "Saliente" if _norm_rut(l.rut_emisor) == _norm_rut(rut) else "Entrante"
-        
+
         estado_final = l.estado.capitalize()
         if estado_final == "Finalizada" and l.duracion_segundos == 0:
             estado_final = "Perdida"
-            
+
         resultado.append({
             "id": l.id,
             "fecha": l.fecha_hora.strftime('%d/%m %H:%M') if l.fecha_hora else '-',
-            "tipo": f"{direccion} {l.tipo_llamada}", 
+            "tipo": f"{direccion} {l.tipo_llamada}",
             "estado": estado_final,
             "nombre": get_nombre_contacto(l, rut),
             "duracion_segundos": l.duracion_segundos
@@ -1070,21 +1153,21 @@ def guardar_historial():
 def setup_local():
     if sys.platform != "win32":
         return "Solo disponible en entorno local (Windows)", 403
-    
+
     if not Usuario.query.filter_by(rut_usuario="11111111").first():
         conserje = Usuario(
             rut_usuario="11111111", nombres="Conserje", apellido_1="Prueba",
             telefono="123456789", es_admin=1, clave_app=ph.hash("111")
         )
         db.session.add(conserje)
-        
+
     if not Usuario.query.filter_by(rut_usuario="22222222").first():
         residente = Usuario(
             rut_usuario="22222222", nombres="Residente", apellido_1="Test",
             telefono="987654321", es_admin=0, id_dpto="101", clave_app=ph.hash("222")
         )
         db.session.add(residente)
-        
+
     db.session.commit()
     return "Usuarios de prueba creados (Conserje: 11111111 / 111) (Residente: 22222222 / 222)"
 
@@ -1097,6 +1180,9 @@ def handle_register(data):
     room = data.get('room')
     if room:
         join_room(room)
+        norm = _norm_rut(room)
+        if norm and norm != room:
+            join_room(norm)
         client_to_rut[request.sid] = room
 
 @socketio.on('join-call')

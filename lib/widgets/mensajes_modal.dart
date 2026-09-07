@@ -64,6 +64,32 @@ class _MensajesModalState extends State<MensajesModal> {
     return nombre.isEmpty ? label : '$label - $nombre';
   }
 
+  String _contactoUltimoMensaje(Map<String, dynamic> contacto) {
+    final rawLastMessage = contacto['last_message'];
+
+    if (rawLastMessage is! Map) {
+      return 'Sin mensajes recibidos';
+    }
+
+    final lastMessage = Map<String, dynamic>.from(rawLastMessage);
+    final esImagen =
+        lastMessage['es_imagen'] == true ||
+            lastMessage['es_imagen'] == 1;
+    final esMio = lastMessage['is_mine'] == true;
+    final prefijo = esMio ? 'Tú: ' : '';
+
+    if (esImagen) {
+      return '📷 Imagen';
+    }
+
+    final mensaje = (lastMessage['mensaje'] ?? '').toString().trim();
+
+    if (mensaje.isEmpty) {
+      return 'Sin mensajes recibidos';
+    }
+    return '$prefijo$mensaje';
+  }
+
   Future<void> _cargarContactos({bool silencioso = false}) async {
     if (!silencioso) {
       setState(() {
@@ -349,7 +375,10 @@ class _MensajesModalState extends State<MensajesModal> {
                 child: Icon(esAdmin ? Icons.support_agent_rounded : Icons.home_rounded, color: Colors.white),
               ),
               title: Text(_contactoTitulo(c), style: const TextStyle(color: Colors.white)),
-              subtitle: Text('RUT: ${_contactoRut(c)}', style: const TextStyle(color: Colors.white54)),
+              subtitle: Text(_contactoUltimoMensaje(c), maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: unread > 0 ? Colors.white70 : Colors.white54,
+                  fontWeight: unread > 0 ? FontWeight.w600 : FontWeight.normal,),
+              ),
               trailing: unread > 0
                   ? CircleAvatar(
                       radius: 13,

@@ -792,11 +792,94 @@ def chat_contactos():
     except Exception:
         unread_counts = {}
 
+    # Último mensaje enviado o recibido de cada contacto.
+    # Compatible con SQLAlchemy 1.3, 1.4 y 2.x.
+    last_message_by_contact = {}
+
+    try:
+        latest_ids_by_contact = {}
+
+        # Último mensaje enviado a cada contacto.
+        sent_rows = (
+            db.session.query(
+                ChatMensaje.rut_receptor,
+                db.func.max(ChatMensaje.id),
+            )
+            .filter(ChatMensaje.rut_emisor == rut)
+            .group_by(ChatMensaje.rut_receptor)
+            .all()
+        )
+
+        # Último mensaje recibido desde cada contacto.
+        received_rows = (
+            db.session.query(
+                ChatMensaje.rut_emisor,
+                db.func.max(ChatMensaje.id),
+            )
+            .filter(ChatMensaje.rut_receptor == rut)
+            .group_by(ChatMensaje.rut_emisor)
+            .all()
+        )
+
+        # Unir ambos sentidos y conservar el ID más reciente.
+        for contacto_value, message_id in sent_rows + received_rows:
+            contacto_key = _normaliza_chat_rut(contacto_value)
+
+            if not contacto_key or message_id is None:
+                continue
+
+            previous_id = latest_ids_by_contact.get(contacto_key)
+
+            if previous_id is None or message_id > previous_id:
+                latest_ids_by_contact[contacto_key] = message_id
+
+        message_ids = list(latest_ids_by_contact.values())
+
+        if message_ids:
+            last_message_rows = (
+                db.session.query(ChatMensaje)
+                .filter(ChatMensaje.id.in_(message_ids))
+                .all()
+            )
+
+            contact_by_message_id = {
+                message_id: contacto_key
+                for contacto_key, message_id
+                in latest_ids_by_contact.items()
+            }
+
+            for message in last_message_rows:
+                contacto_key = contact_by_message_id.get(message.id)
+
+                if not contacto_key:
+                    continue
+
+                payload = _chat_message_payload(message)
+                payload["is_mine"] = (
+                        _normaliza_chat_rut(message.rut_emisor) == rut
+                )
+
+                last_message_by_contact[contacto_key] = payload
+
+    except Exception:
+        app.logger.exception("Error cargando últimos mensajes")
+        db.session.rollback()
+        last_message_by_contact = {}
+
+    contactos = [
+        _usuario_chat_payload(
+            usuario,
+            unread_counts.get(_normaliza_chat_rut(usuario.rut_usuario),0,),
+            last_message_by_contact.get(_normaliza_chat_rut(usuario.rut_usuario),),
+        )
+        for usuario in usuarios
+    ]
+
     return jsonify({
         'success': True,
         'rut': rut,
         'unidad_label': _usuario_chat_payload(solicitante).get('unidad_label'),
-        'contactos': [_usuario_chat_payload(u, unread_counts.get(u.rut_usuario, 0)) for u in usuarios],
+        'contactos': contactos,
     })
 
 
