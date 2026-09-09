@@ -772,7 +772,7 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                             ),
                             // CARD 2: LLAMAR CONSERJERÍA
                             InkWell(
-                              onTap: () => _llamar('000', 'audio'),
+                              onTap: () => _llamar('11111111', 'audio'),
                               borderRadius: BorderRadius.circular(20),
                               child: Container(
                                 padding: const EdgeInsets.all(16),
