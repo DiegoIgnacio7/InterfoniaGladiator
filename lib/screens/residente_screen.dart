@@ -1,3 +1,4 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -39,6 +40,33 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
   void _tocarTono() => _ringtonePlayer.playRingtone();
   void _detenerTono() => _ringtonePlayer.stop();
 
+  // Función para registrar y actualizar el Token FCM
+  Future<void> _registrarTokenFCM(String rut) async {
+    try {
+      String? token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await http.post(
+          Uri.parse('$kBaseUrl/registrar-token'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'rut': rut, 'token': token}),
+        );
+        debugPrint('✅ Token FCM enviado al servidor');
+      }
+
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+        await http.post(
+          Uri.parse('$kBaseUrl/registrar-token'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'rut': rut, 'token': newToken}),
+        );
+        debugPrint('🔄 Token FCM renovado y enviado al servidor');
+      });
+    } catch (e) {
+      debugPrint('❌ Error obteniendo token FCM: $e');
+    }
+  }
+  // =========================================================
+
   @override
   void initState() {
     super.initState();
@@ -52,10 +80,15 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       miNombre = prefs.getString('nombre') ?? '';
       miDpto = prefs.getString('dpto') ?? '';
     });
+    
+    // NUEVO: Ejecutar el registro del token si el RUT existe
+    if (miRut.isNotEmpty) {
+      _registrarTokenFCM(miRut);
+    }
+
     _conectarSocket();
     _abrirMensajesSiPendiente();
   }
-
 
   Future<void> _abrirMensajesSiPendiente() async {
     final prefs = await SharedPreferences.getInstance();
@@ -134,7 +167,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       );
     });
 
-
     socket.on('chat-message', (data) {
       if (!mounted || data is! Map) return;
       final receptor = (data['rut_receptor'] ?? '').toString();
@@ -184,8 +216,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       }
     });
   }
-
-
 
   void _mostrarLlamadaEntrante(dynamic data) {
     if (!mounted) return;
@@ -283,8 +313,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       _dialogoEntranteAbierto = false;
     });
   }
-
-
 
   Future<void> _rechazarEntrante(dynamic data) async {
     _detenerTono();

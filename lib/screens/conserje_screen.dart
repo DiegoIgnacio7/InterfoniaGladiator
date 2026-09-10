@@ -1,3 +1,4 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -41,6 +42,35 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
   void _tocarTono() => _ringtonePlayer.playRingtone();
   void _detenerTono() => _ringtonePlayer.stop();
 
+  // =========================================================
+  // NUEVO: Función para registrar y actualizar el Token FCM
+  // =========================================================
+  Future<void> _registrarTokenFCM(String rut) async {
+    try {
+      String? token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await http.post(
+          Uri.parse('$kBaseUrl/registrar-token'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'rut': rut, 'token': token}),
+        );
+        debugPrint('✅ Token FCM enviado al servidor');
+      }
+
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+        await http.post(
+          Uri.parse('$kBaseUrl/registrar-token'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'rut': rut, 'token': newToken}),
+        );
+        debugPrint('🔄 Token FCM renovado y enviado al servidor');
+      });
+    } catch (e) {
+      debugPrint('❌ Error obteniendo token FCM: $e');
+    }
+  }
+  // =========================================================
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +103,11 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
       _mensajesSinLeerTotales = totalesGuardados;
       _mensajesSinLeerPorUsuario = mapCargado;
     });
+
+    // NUEVO: Ejecutar el registro del token si el RUT existe
+    if (miRut.isNotEmpty) {
+      _registrarTokenFCM(miRut);
+    }
 
     _conectarSocket();
     _abrirMensajesSiPendiente();
