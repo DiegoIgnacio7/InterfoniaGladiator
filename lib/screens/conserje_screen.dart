@@ -42,21 +42,34 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
   void _tocarTono() => _ringtonePlayer.playRingtone();
   void _detenerTono() => _ringtonePlayer.stop();
 
-  // =========================================================
-  // NUEVO: Función para registrar y actualizar el Token FCM
-  // =========================================================
+  // NUEVO: Función para solicitar permisos y registrar el Token FCM
+
   Future<void> _registrarTokenFCM(String rut) async {
     try {
-      String? token = await FirebaseMessaging.instance.getToken();
-      if (token != null) {
-        await http.post(
-          Uri.parse('$kBaseUrl/registrar-token'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'rut': rut, 'token': token}),
-        );
-        debugPrint('✅ Token FCM enviado al servidor');
+      // 1. Pedir permisos a iOS/Android (Obligatorio en iPhone)
+      NotificationSettings settings = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+
+      // 2. Si el usuario acepta, obtenemos el token
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        String? token = await FirebaseMessaging.instance.getToken();
+        
+        if (token != null) {
+          await http.post(
+            Uri.parse('$kBaseUrl/registrar-token'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'rut': rut, 'token': token}),
+          );
+          debugPrint('✅ Token FCM enviado al servidor');
+        }
+      } else {
+        debugPrint('❌ Permisos de notificación denegados por el usuario');
       }
 
+      // 3. Manejo de renovación de tokens
       FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
         await http.post(
           Uri.parse('$kBaseUrl/registrar-token'),
@@ -69,6 +82,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
       debugPrint('❌ Error obteniendo token FCM: $e');
     }
   }
+  // =========================================================
   // =========================================================
 
   @override
