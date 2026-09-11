@@ -2,8 +2,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
+
 import '../config.dart';
+import '../services/push_notification_service.dart';
 import 'conserje_screen.dart';
 import 'residente_screen.dart';
 
@@ -37,21 +38,6 @@ class _LoginScreenState extends State<LoginScreen> {
       if (data['success'] == true) {
         final prefs = await SharedPreferences.getInstance();
 
-        // Opcional: Solicitar token FCM y registrarlo en backend
-        try {
-          final token = await FirebaseMessaging.instance.getToken();
-          if (token != null) {
-            await http.post(
-              Uri.parse('$kBaseUrl/registrar-token'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'rut': (data['rut'] ?? rut).toString(), 'token': token}),
-            );
-            debugPrint('✅ Token FCM registrado para $rut');
-          }
-        } catch (e) {
-          debugPrint('⚠️ No se pudo registrar el token FCM: $e');
-        }
-
         // Forzar conversión a String para evitar errores de tipo
         final rutString = (data['rut'] ?? '').toString();
         final nombre = (data['nombre'] ?? '').toString();
@@ -65,6 +51,11 @@ class _LoginScreenState extends State<LoginScreen> {
         await prefs.setString('nombre', nombre);
         await prefs.setString('dpto', dpto);
         await prefs.setInt('es_admin', esAdmin);
+
+
+        // Llamamos al nuevo servicio de notificaciones
+        // Esto pedirá permisos en iOS/Android y enviará el token al backend
+        await PushNotificationService.initAndRegisterToken(rutString);
 
         if (!mounted) return;
         if (esAdmin == 1) {
