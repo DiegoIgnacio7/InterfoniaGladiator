@@ -1,64 +1,80 @@
+import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-// Importa tu archivo de configuración donde tienes la URL base de tu API
-// import 'package:interfonia_gladiator/config.dart'; 
+import 'package:flutter/foundation.dart';
+import '../config.dart';
 
 class PushNotificationService {
   static final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
 
-  // Llama a esta función justo después de que el usuario inicie sesión con éxito
-  static Future<void> initAndRegisterToken(String rutUsuario) async {
-    // 1. Solicitar permisos (esto hace que aparezca la alerta en iOS)
-    NotificationSettings settings = await _firebaseMessaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+  static Future<void> initAndRegisterToken(String rut) async {
+    try {
+      // 1. Pedir permisos al usuario (Aquí sale la alerta en iOS)
+      NotificationSettings settings = await _firebaseMessaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
 
-    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      print('✅ Permisos de notificación concedidos.');
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        debugPrint('Permiso concedido para notificaciones');
 
-      // 2. Obtener el token actual de FCM
-      String? token = await _firebaseMessaging.getToken();
-      if (token != null) {
-        print('📱 Token FCM Obtenido: $token');
-        await enviarTokenAlBackend(rutUsuario, token);
+        // 🔥 ESPERA INTELIGENTE (AHORA SÍ EN EL LUGAR CORRECTO) 🔥
+        // Apple empieza a generar el token justo después de dar el permiso.
+        if (!kIsWeb && Platform.isIOS) {
+          String? apnsToken = await _firebaseMessaging.getAPNSToken();
+          int reintentos = 0;
+          
+          // Esperamos hasta 5 segundos a que Apple nos entregue la llave
+          while (apnsToken == null && reintentos < 5) {
+            await Future.delayed(const Duration(seconds: 1));
+            apnsToken = await _firebaseMessaging.getAPNSToken();
+            reintentos++;
+          }
+          
+          if (apnsToken == null) {
+            debugPrint('⚠️ Advertencia: No se obtuvo el APNs token tras 5 segundos.');
+          } else {
+            debugPrint('✅ Token APNs de Apple listo: $apnsToken');
+          }
+        }
+
+        // 2. Obtener el token general (FCM)
+        String? token = await _firebaseMessaging.getToken();
+
+        if (token != null) {
+          debugPrint('Token FCM obtenido: $token');
+          // 3. Enviar el token al backend
+          await _enviarTokenAlBackend(rut, token);
+        }
+      } else {
+        debugPrint('Permiso denegado por el usuario');
       }
-
-      // 3. Escuchar si el token se actualiza (Firebase lo rota a veces)
-      _firebaseMessaging.onTokenRefresh.listen((newToken) {
-        print('🔄 Token FCM Actualizado: $newToken');
-        enviarTokenAlBackend(rutUsuario, newToken);
-      });
-
-    } else {
-      print('❌ Permisos de notificación denegados por el usuario.');
+    } catch (e) {
+      debugPrint('Error al inicializar notificaciones: $e');
     }
   }
 
-  static Future<void> enviarTokenAlBackend(String rut, String token) async {
+  static Future<void> _enviarTokenAlBackend(String rut, String token) async {
     try {
-      // Reemplaza esto con la URL real de tu backend (o usa tu config.dart)
-      // final url = Uri.parse('${Config.apiUrl}/registrar-token');
-      final url = Uri.parse('https://tu-dominio-o-ngrok.com/registrar-token'); 
-      
+      final url = Uri.parse('$kBaseUrl/update-fcm-token');
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'rut': rut, 
-          'token': token
+          'rut': rut,
+          'fcm_token': token,
         }),
       );
 
       if (response.statusCode == 200) {
-        print('🌐 Token registrado exitosamente en el backend para el RUT $rut.');
+        debugPrint('Token FCM actualizado en la base de datos correctamente.');
       } else {
-        print('⚠️ Error al registrar token en backend: ${response.body}');
+        debugPrint('Error al actualizar token: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
-      print('💥 Error en la petición POST /registrar-token: $e');
+      debugPrint('Error de red al enviar el token al backend: $e');
     }
   }
 }

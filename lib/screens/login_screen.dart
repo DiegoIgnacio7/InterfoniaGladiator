@@ -1,9 +1,7 @@
 import 'dart:convert';
-import 'dart:io'; 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_messaging/firebase_messaging.dart'; 
 
 import '../config.dart';
 import '../services/push_notification_service.dart';
@@ -53,27 +51,6 @@ class _LoginScreenState extends State<LoginScreen> {
         await prefs.setString('nombre', nombre);
         await prefs.setString('dpto', dpto);
         await prefs.setInt('es_admin', esAdmin);
-
-
-        // 🔥 NUEVO: Lógica de espera para el token APNs en iOS
-        if (Platform.isIOS) {
-          String? apnsToken = await FirebaseMessaging.instance.getAPNSToken();
-          int reintentos = 0;
-          
-          // Le damos hasta 5 segundos a Apple para generar su token nativo
-          while (apnsToken == null && reintentos < 5) {
-            await Future.delayed(const Duration(seconds: 1));
-            apnsToken = await FirebaseMessaging.instance.getAPNSToken();
-            reintentos++;
-          }
-          
-          if (apnsToken == null) {
-            debugPrint('⚠️ Advertencia: No se pudo obtener el APNs token después de 5 segundos.');
-          } else {
-            debugPrint('✅ Token APNs de Apple recibido correctamente.');
-          }
-        }
-
 
         // Llamamos al nuevo servicio de notificaciones
         // Esto pedirá permisos en iOS/Android y enviará el token al backend
