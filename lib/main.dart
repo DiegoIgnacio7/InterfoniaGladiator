@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
+import 'firebase_options.dart'; // 🔥 NUEVO: Importamos el archivo de configuración
 import 'screens/login_screen.dart';
 import 'screens/llamada_screen.dart';
 import 'screens/citofono_audio_screen.dart';
@@ -50,7 +51,11 @@ class MyHttpOverrides extends HttpOverrides {
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
-  await Firebase.initializeApp();
+  
+  // Inicializamos con las opciones de plataforma también en segundo plano
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
   final type = message.data['type'];
 
@@ -98,13 +103,16 @@ void main() async {
 
   // 2. Inicializar Firebase de forma segura
   try {
-    await Firebase.initializeApp();
+    // Inicializamos con las opciones generadas por el CLI
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   } catch (e) {
-    debugPrint('Error inicializando Firebase: $e');
+    debugPrint('🔴 ERROR CRÍTICO: Firebase falló al inicializarse: $e');
   }
 
-  // 3. Inicializar Notificaciones de forma segura (Aquí suele ocurrir el crash en iOS)
+  // 3. Inicializar Notificaciones de forma segura
   try {
     await CallNotifications.ensureInitialized(
       onResponse: (response) {
@@ -140,48 +148,52 @@ class _CitofonoAppState extends State<CitofonoApp> {
   }
 
   void _setupInteractions() async {
-    final messaging = FirebaseMessaging.instance;
-    await messaging.requestPermission(alert: true, badge: true, sound: true);
+    try {
+      final messaging = FirebaseMessaging.instance;
+      await messaging.requestPermission(alert: true, badge: true, sound: true);
 
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-      debugPrint('🔔 Mensaje recibido en primer plano');
-      
-      final prefs = await SharedPreferences.getInstance();
-      final miRut = prefs.getString('rut') ?? '';
-      if (message.data['caller_rut'] == miRut && miRut.isNotEmpty) return;
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+        debugPrint('🔔 Mensaje recibido en primer plano');
+        
+        final prefs = await SharedPreferences.getInstance();
+        final miRut = prefs.getString('rut') ?? '';
+        if (message.data['caller_rut'] == miRut && miRut.isNotEmpty) return;
 
-      if (message.data['type'] == 'call') {
-        FlutterRingtonePlayer().playRingtone();
-      } else if (message.data['type'] == 'missed_call') {
-        FlutterRingtonePlayer().stop();
-        final caller = message.data['caller_dpto'] ?? message.data['caller_rut'] ?? 'Citófono';
-        CallNotifications.showMissedCall(
-          caller: caller,
-          reason: message.data['reason']?.toString(),
-        );
-      } else if (message.data['type'] == 'chat_message') {
-        final sender = message.data['sender_label'] ?? message.data['rut_emisor'] ?? 'Depto/Casa';
-        final body = message.data['mensaje'] ?? 'Nuevo mensaje';
-        final peerRut = message.data['rut_emisor']?.toString();
-        CallNotifications.showChatMessage(
-          sender: sender.toString(),
-          body: body.toString(),
-          peerRut: peerRut,
-        );
-      }
-    });
+        if (message.data['type'] == 'call') {
+          FlutterRingtonePlayer().playRingtone();
+        } else if (message.data['type'] == 'missed_call') {
+          FlutterRingtonePlayer().stop();
+          final caller = message.data['caller_dpto'] ?? message.data['caller_rut'] ?? 'Citófono';
+          CallNotifications.showMissedCall(
+            caller: caller,
+            reason: message.data['reason']?.toString(),
+          );
+        } else if (message.data['type'] == 'chat_message') {
+          final sender = message.data['sender_label'] ?? message.data['rut_emisor'] ?? 'Depto/Casa';
+          final body = message.data['mensaje'] ?? 'Nuevo mensaje';
+          final peerRut = message.data['rut_emisor']?.toString();
+          CallNotifications.showChatMessage(
+            sender: sender.toString(),
+            body: body.toString(),
+            peerRut: peerRut,
+          );
+        }
+      });
 
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      debugPrint('📩 Notificación clickeada (app en background)');
-      _detenerTodoYEntrar(message);
-    });
-
-    FirebaseMessaging.instance.getInitialMessage().then((message) {
-      if (message != null) {
-        debugPrint('🚀 App abierta desde notificación muerta');
+      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+        debugPrint('📩 Notificación clickeada (app en background)');
         _detenerTodoYEntrar(message);
-      }
-    });
+      });
+
+      FirebaseMessaging.instance.getInitialMessage().then((message) {
+        if (message != null) {
+          debugPrint('🚀 App abierta desde notificación muerta');
+          _detenerTodoYEntrar(message);
+        }
+      });
+    } catch (e) {
+      debugPrint('⚠️ Error configurando FirebaseMessaging: $e');
+    }
   }
 
   void _detenerTodoYEntrar(RemoteMessage message) {
