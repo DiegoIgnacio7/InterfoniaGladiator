@@ -44,17 +44,16 @@ class Esp32AudioBridge {
   // Por eso ahora capturamos explícitamente a 48 kHz y bajamos nosotros a 8 kHz.
   static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // 6
 
-  // Cola mínima de voz en vivo. 4 frames = 80 ms máximo antes de botar viejo.
-  static const int maxQueuedBytes = txFrameBytes * 4;
+  // Cola mínima de voz en vivo. 25 frames = ~500 ms máximo antes de botar viejo (ajustado para ráfagas en iOS).
+  static const int maxQueuedBytes = txFrameBytes * 25;
 
-  // Warmup real del micrófono: los primeros buffers de Android pueden ser ráfagas
-  // antiguas. No se muestran como “audio atrasado”, porque no son error de llamada.
-  static const int micWarmupDiscardMs = 700;
-  static const int rxWarmupDiscardMs = 250;
+  // Warmup real del micrófono: absorbemos la latencia inicial del altavoz/micrófono de iOS/Android.
+  static const int micWarmupDiscardMs = 1000;
+  static const int rxWarmupDiscardMs = 300;
 
   // Límite duro: PCM16 mono 8 kHz = 16000 bytes/s.
-  // Dejamos margen pequeño por jitter del Timer.
-  static const int maxTxBytesPerSecond = 17280;
+  // Margen ampliado para tolerar fluctuaciones de red de la pila de iOS.
+  static const int maxTxBytesPerSecond = 24000;
 
   static const MethodChannel _nativeAudioTrack = MethodChannel('gladiator/citofono_audio_track');
 
@@ -624,6 +623,7 @@ class Esp32AudioBridge {
       debugPrint('[CITOFONO_AUDIO] browser_tx send error: $e');
     }
   }
+
   Future<void> _safeStopRecorder() async {
     if (_recorderStarted) {
       try {
