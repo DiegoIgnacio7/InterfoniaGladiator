@@ -3,7 +3,7 @@ import Flutter
 import AVFoundation
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+@objc class AppDelegate: FlutterAppDelegate {
   private var audioEngine: AVAudioEngine?
   private var playerNode: AVAudioPlayerNode?
   private var audioFormat8k: AVAudioFormat?
