@@ -268,10 +268,10 @@ class Esp32AudioBridge {
     _playerError = null;
     _playbackSampleRate = sampleRate;
 
-    // En Android preferimos AudioTrack nativo: permite aplicar setPreferredDevice
+// En Android e iOS preferimos AudioTrack nativo: permite aplicar setPreferredDevice
     // sobre el track real, cosa que flutter_sound no expone. Esto es clave en
     // teléfonos de escritorio con auricular/banana + altavoz.
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       debugPrint('[CITOFONO_AUDIO] player start native AudioTrack 8000...');
       final native16 = await _tryStartNativePlayer(sampleRate);
       if (native16) {
