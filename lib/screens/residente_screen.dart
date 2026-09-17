@@ -15,6 +15,7 @@ import '../widgets/directorio_modal.dart';
 import '../widgets/dialer_modal.dart';
 import '../widgets/historial_modal.dart';
 import '../widgets/mensajes_modal.dart';
+import '../widgets/recados_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -514,6 +515,16 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
     );
   }
 
+  void _abrirRecados() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => RecadosModal(miRut: miRut),
+    );
+  }
+
   void _abrirMensajes() {
     showModalBottomSheet(
       context: context,
@@ -716,7 +727,24 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
                         ),
                         const SizedBox(height: 14),
-                        // 2x2 FEATURE CARDS GRID
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: _abrirRecados,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF151C2C),
+                              foregroundColor: const Color(0xFF20CDFF),
+                              padding: const EdgeInsets.all(18),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
+                            icon: const Icon(Icons.sticky_note_2_rounded),
+                            label: const Text('Recados'),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        // FEATURE CARDS GRID
                         GridView.count(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),

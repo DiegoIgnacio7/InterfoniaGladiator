@@ -13,6 +13,7 @@ import '../helpers/call_notifications.dart';
 import 'login_screen.dart';
 import '../widgets/directorio_modal.dart';
 import '../widgets/historial_modal.dart';
+import '../widgets/recados_modal.dart';
 import '../widgets/mensajes_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
@@ -495,6 +496,15 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
     );
   }
 
+  void _abrirRecados() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => RecadosModal(miRut: miRut),
+    );
+  }
+
   void _cerrarSesion() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
@@ -587,6 +597,20 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
               backgroundColor: const Color(0xFF333344),
               onPressed: _abrirHistorial,
               child: const Icon(Icons.history_rounded, color: Colors.white),
+            ),
+          ),
+          Positioned(
+            bottom: 102,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: FloatingActionButton.extended(
+                heroTag: 'fab_recados',
+                backgroundColor: const Color(0x9720CDFF),
+                onPressed: _abrirRecados,
+                icon: const Icon(Icons.sticky_note_2_rounded, color: Colors.white),
+                label: const Text('Recados', style: TextStyle(color: Colors.white)),
+              ),
             ),
           ),
           Positioned(
