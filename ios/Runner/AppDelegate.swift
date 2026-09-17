@@ -18,7 +18,7 @@ import AVFoundation
 
     let controller : FlutterViewController = window?.rootViewController as! FlutterViewController
     let audioChannel = FlutterMethodChannel(name: "gladiator/citofono_audio_track",
-                                              binaryMessenger: controller.binaryMessenger)
+                                            binaryMessenger: controller.binaryMessenger)
 
     audioChannel.setMethodCallHandler({
       [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
@@ -43,7 +43,8 @@ import AVFoundation
       }
     })
 
-    return super.application(application, launchOptions: launchOptions)
+    
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   private func setupAudioSession() {
