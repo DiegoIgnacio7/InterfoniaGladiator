@@ -24,36 +24,31 @@ String _wsBaseUrl() {
 ///
 /// Formato esperado por el ESP32:
 /// - PCM16 mono
-/// - 8 kHz (modo voz baja latencia)
+/// - 16 kHz (modo voz alta calidad)
 /// - little-endian
 /// - binario crudo por WebSocket, sin JSON/base64/WebRTC
-///
-/// Rutas:
-/// - browser_rx: recibe audio desde el micrófono ESP32
-/// - browser_tx: envía audio del micrófono Flutter hacia el ESP32
 class Esp32AudioBridge {
-  static const int sampleRate = 8000;
+  // 🔥 CAMBIO: sampleRate actualizado a 16000
+  static const int sampleRate = 16000;
   static const int micCaptureSampleRate = 48000;
   static const int fallbackPlaybackSampleRate = 48000;
   static const int channels = 1;
   static const int bytesPerSample = 2;
   static const int frameMs = 20;
-  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; // 320 bytes @ 8 kHz
+  // 🔥 CAMBIO: txFrameBytes ahora es 640 bytes (16000 * 2 * 20 / 1000)
+  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; 
 
-  // Android suele capturar internamente a 48 kHz aunque pidamos 8 kHz.
-  // Por eso ahora capturamos explícitamente a 48 kHz y bajamos nosotros a 8 kHz.
-  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // 6
+  // Factor de downsampling pasa de 6 (48000/8000) a 3 (48000/16000)
+  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate;
 
-  // Cola mínima de voz en vivo. 25 frames = ~500 ms máximo antes de botar viejo (ajustado para ráfagas en iOS).
+  // Cola mínima de voz en vivo.
   static const int maxQueuedBytes = txFrameBytes * 25;
 
-  // Warmup real del micrófono: absorbemos la latencia inicial del altavoz/micrófono de iOS/Android.
   static const int micWarmupDiscardMs = 1000;
   static const int rxWarmupDiscardMs = 300;
 
-  // Límite duro: PCM16 mono 8 kHz = 16000 bytes/s.
-  // Margen ampliado para tolerar fluctuaciones de red de la pila de iOS.
-  static const int maxTxBytesPerSecond = 24000;
+  // Límite duro ampliado (16000 bytes/s * 2 bytes = 32000 B/s + margen)
+  static const int maxTxBytesPerSecond = 48000;
 
   static const MethodChannel _nativeAudioTrack = MethodChannel('gladiator/citofono_audio_track');
 
@@ -156,8 +151,6 @@ class Esp32AudioBridge {
       debugPrint('[CITOFONO_AUDIO] route ${_useSpeaker ? 'speaker' : 'handset'} -> $routeInfo');
 
       final communicationResult = routeInfo?['communicationResult'];
-      // En Android 12+ false significa que el dispositivo pedido no existe o el HAL no lo aceptó.
-      // En Android <= 11 viene null, porque se usa setSpeakerphoneOn legacy.
       if (communicationResult == false) return false;
       return true;
     } catch (e, st) {
@@ -187,8 +180,6 @@ class Esp32AudioBridge {
   Future<void> start() async {
     if (_started) return;
 
-    // Evita 2 pantallas/instancias mandando audio al mismo tiempo.
-    // Si hay dos browser_tx activos, el ESP32 recibe rafagas, hace Drop y sube la latencia.
     if (_activeBridge != null && _activeBridge != this) {
       await _activeBridge!.stop();
     }
@@ -246,9 +237,6 @@ class Esp32AudioBridge {
     await _startRecorderSafe();
     await _applyAudioRoute();
 
-    // Importante: no enviar todo de golpe. El ESP32 se satura si llegan rafagas.
-    // Enviamos SOLO 320 bytes cada 20 ms: PCM16 mono 8 kHz en tiempo real.
-    // Si se acumula cola, se descarta lo antiguo.
     _txTimer?.cancel();
     _txWindowStartMs = DateTime.now().millisecondsSinceEpoch;
     _txWindowBytes = 0;
@@ -268,14 +256,11 @@ class Esp32AudioBridge {
     _playerError = null;
     _playbackSampleRate = sampleRate;
 
-// En Android e iOS preferimos AudioTrack nativo: permite aplicar setPreferredDevice
-    // sobre el track real, cosa que flutter_sound no expone. Esto es clave en
-    // teléfonos de escritorio con auricular/banana + altavoz.
     if (Platform.isAndroid || Platform.isIOS) {
-      debugPrint('[CITOFONO_AUDIO] player start native AudioTrack 8000...');
+      debugPrint('[CITOFONO_AUDIO] player start native AudioTrack $sampleRate...');
       final native16 = await _tryStartNativePlayer(sampleRate);
       if (native16) {
-        debugPrint('[CITOFONO_AUDIO] native AudioTrack 8000 OK');
+        debugPrint('[CITOFONO_AUDIO] native AudioTrack $sampleRate OK');
         return;
       }
 
@@ -289,10 +274,10 @@ class Esp32AudioBridge {
       }
     }
 
-    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player 8000...');
+    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player $sampleRate...');
     final ok16 = await _tryStartPlayer(sampleRate);
     if (ok16) {
-      debugPrint('[CITOFONO_AUDIO] flutter_sound player 8000 OK');
+      debugPrint('[CITOFONO_AUDIO] flutter_sound player $sampleRate OK');
       return;
     }
 
@@ -398,7 +383,7 @@ class Esp32AudioBridge {
         sampleRate: micCaptureSampleRate,
       );
       _recorderStarted = true;
-      debugPrint('[CITOFONO_AUDIO] recorder ${micCaptureSampleRate} Hz OK -> downsample a ${sampleRate} Hz');
+      debugPrint('[CITOFONO_AUDIO] recorder $micCaptureSampleRate Hz OK -> downsample a $sampleRate Hz');
     } catch (e, st) {
       _recorderFailed = true;
       _recorderError = e.toString();
@@ -413,7 +398,7 @@ class Esp32AudioBridge {
 
     Uint8List payload = bytes;
     if (_playbackSampleRate == fallbackPlaybackSampleRate) {
-      payload = _upsamplePcm16Mono8kTo48k(bytes);
+      payload = _upsamplePcm16Mono16kTo48k(bytes);
     }
 
     if (_usingNativePlayer && _nativePlayerReady) {
@@ -434,7 +419,6 @@ class Esp32AudioBridge {
       final sink = _player.uint8ListSink;
       if (sink == null) return;
 
-      // El backend tiene max_audio_frame_bytes=2048; igual partimos por seguridad.
       const maxChunk = 2048;
       for (int offset = 0; offset < payload.length; offset += maxChunk) {
         final end = (offset + maxChunk > payload.length) ? payload.length : offset + maxChunk;
@@ -449,16 +433,16 @@ class Esp32AudioBridge {
     }
   }
 
-  Uint8List _upsamplePcm16Mono8kTo48k(Uint8List input) {
+  // 🔥 CAMBIO: Ahora repetimos las muestras 3 veces (16k -> 48k) en vez de 6
+  Uint8List _upsamplePcm16Mono16kTo48k(Uint8List input) {
     final usable = input.length - (input.length % 2);
-    // 8 kHz -> 48 kHz = repetir cada muestra 6 veces.
-    final output = Uint8List(usable * 6);
+    final output = Uint8List(usable * 3);
     int out = 0;
 
     for (int i = 0; i < usable; i += 2) {
       final lo = input[i];
       final hi = input[i + 1];
-      for (int r = 0; r < 6; r++) {
+      for (int r = 0; r < 3; r++) {
         output[out++] = lo;
         output[out++] = hi;
       }
@@ -480,9 +464,8 @@ class Esp32AudioBridge {
     data[offset + 1] = (v >> 8) & 0xFF;
   }
 
-  Uint8List _downsampleMic48kTo8k(Uint8List bytes, int incoming) {
-    // Combina carry anterior con el bloque nuevo. El carry máximo normal son
-    // 10 bytes, porque 6 muestras * 2 bytes = 12 bytes por muestra final.
+  // 🔥 CAMBIO: Modificada para downsample de 48k a 16k
+  Uint8List _downsampleMic48kTo16k(Uint8List bytes, int incoming) {
     Uint8List input;
     if (_micDownsampleCarry.isEmpty) {
       input = incoming == bytes.length ? bytes : bytes.sublist(0, incoming);
@@ -492,7 +475,7 @@ class Esp32AudioBridge {
       input.setRange(_micDownsampleCarry.length, input.length, bytes.sublist(0, incoming));
     }
 
-    const int inBytesPerOutSample = micDownsampleFactor * bytesPerSample; // 12 bytes
+    const int inBytesPerOutSample = micDownsampleFactor * bytesPerSample; // 6 bytes ahora (3 * 2)
     final int consumable = input.length - (input.length % inBytesPerOutSample);
     final int carryLen = input.length - consumable;
 
@@ -530,7 +513,6 @@ class Esp32AudioBridge {
     final incoming = bytes.length - (bytes.length % 2);
     if (incoming <= 0) return;
 
-    // No enviar ni contar como atraso la ráfaga inicial del recorder.
     if (now < _micWarmupUntilMs) {
       warmupDroppedTxBytes += incoming;
       _txQueue.clear();
@@ -544,13 +526,10 @@ class Esp32AudioBridge {
       _micWarmupUntilMs = 0;
     }
 
-    // Clave: NO meter 48 kHz directo a una cola que se envía a 8 kHz.
-    // Primero bajamos a 8 kHz, y recién ahí aplicamos la política de cola viva.
-    final downsampled = _downsampleMic48kTo8k(bytes, incoming);
+    // Usamos el nuevo método de downsample a 16 kHz
+    final downsampled = _downsampleMic48kTo16k(bytes, incoming);
     if (downsampled.isEmpty) return;
 
-    // Si por jitter llega más de lo que podemos mantener, botar viejo en bloques
-    // pares para no desalinear PCM16. Esto sí es atraso real, no resampling.
     int start = 0;
     if (downsampled.length > maxQueuedBytes) {
       start = downsampled.length - maxQueuedBytes;
@@ -590,25 +569,15 @@ class Esp32AudioBridge {
       _txWindowDropped = 0;
     }
 
-    // === SOLUCIÓN RELLENO DE SILENCIO (EVITA VARIACIONES DE RELOJ / JITTER) ===
-    // Inicializamos un frame de tamaño fijo (320 bytes), que por defecto viene lleno de ceros (silencio).
     final frame = Uint8List(txFrameBytes);
     
-    // Determinamos cuántos bytes reales tenemos disponibles en la cola
     int bytesToExtract = _txQueue.length < txFrameBytes ? _txQueue.length : txFrameBytes;
-    
-    // Forzamos alineación par (2 bytes por muestra) para no desfasar el audio PCM16
     bytesToExtract -= bytesToExtract % 2;
 
-    // Extraemos solo los bytes disponibles. El espacio restante en 'frame' permanecerá en 0x00
     for (int i = 0; i < bytesToExtract; i++) {
       frame[i] = _txQueue.removeFirst();
     }
-    // =========================================================================
 
-    // Freno de seguridad absoluto: aunque por error se creen dos timers o
-    // el recorder entregue rafagas, esta instancia NO puede mandar mas de
-    // ~33.6 KB/s por browser_tx.
     if (_txWindowBytes + frame.length > maxTxBytesPerSecond) {
       droppedTxBytes += frame.length;
       _txWindowDropped += frame.length;

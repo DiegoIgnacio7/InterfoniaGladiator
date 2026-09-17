@@ -6,9 +6,7 @@ import AVFoundation
 @objc class AppDelegate: FlutterAppDelegate {
   private var audioEngine: AVAudioEngine?
   private var playerNode: AVAudioPlayerNode?
-  private var audioFormat8k: AVAudioFormat?
-  private var audioFormatNative: AVAudioFormat?
-  private var audioConverter: AVAudioConverter?
+  private var audioFormat16k: AVAudioFormat?
 
   override func application(
     _ application: UIApplication,
@@ -16,7 +14,6 @@ import AVFoundation
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
 
-    
     let registrar = self.registrar(forPlugin: "CitofonoAudioPlugin")!
     let audioChannel = FlutterMethodChannel(name: "gladiator/citofono_audio_track",
                                             binaryMessenger: registrar.messenger())
@@ -65,56 +62,42 @@ import AVFoundation
 
     engine.attach(player)
 
-    // Entrada PCM ESP32: 8 kHz, 16 bits Mono
-    audioFormat8k = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 8000.0, channels: 1, interleaved: false)
+    audioFormat16k = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000.0, channels: 1, interleaved: false)
     
-    let mainNode = engine.mainMixerNode
-    audioFormatNative = mainNode.outputFormat(forBus: 0)
+    guard let format16k = audioFormat16k else { return }
 
-    guard let format8k = audioFormat8k, let formatNative = audioFormatNative else { return }
-
-    engine.connect(player, to: mainNode, format: formatNative)
-    audioConverter = AVAudioConverter(from: format8k, to: formatNative)
+    engine.connect(player, to: engine.mainMixerNode, format: format16k)
 
     do {
       try engine.start()
       player.play()
     } catch {
-      print("Error AVAudioEngine: \(error.localizedDescription)")
+      print("Error iniciando AVAudioEngine: \(error.localizedDescription)")
     }
   }
 
   private func playPCMData(_ pcmData: Data) {
-    guard let player = playerNode,
-          let converter = audioConverter,
-          let format8k = audioFormat8k,
-          let formatNative = audioFormatNative else { return }
+    guard let player = playerNode, let format16k = audioFormat16k else { return }
 
+    // Calculamos los frames (1 frame = 2 bytes)
     let frameCount = UInt32(pcmData.count / 2)
-    guard frameCount > 0, let inputBuffer = AVAudioPCMBuffer(pcmFormat: format8k, frameCapacity: frameCount) else { return }
+    guard frameCount > 0 else { return }
 
-    inputBuffer.frameLength = frameCount
-    pcmData.withUnsafeBytes { rawBufferPointer in
-      if let address = rawBufferPointer.baseAddress {
-        memcpy(inputBuffer.int16ChannelData?[0], address, pcmData.count)
-      }
-    }
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: format16k, frameCapacity: frameCount) else { return }
+    buffer.frameLength = frameCount
 
-    let sampleRateRatio = formatNative.sampleRate / format8k.sampleRate
-    let capacityNative = UInt32(Double(frameCount) * sampleRateRatio)
     
-    guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: formatNative, frameCapacity: capacityNative) else { return }
-
-    var error: NSError?
-    let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
-      outStatus.pointee = .haveData
-      return inputBuffer
+    pcmData.withUnsafeBytes { rawBuffer in
+        if let sourceAddress = rawBuffer.baseAddress,
+           let destinationAddress = buffer.int16ChannelData?[0] {
+            memcpy(destinationAddress, sourceAddress, pcmData.count)
+        }
     }
 
-    converter.convert(to: outputBuffer, error: &error, withInputFrom: inputBlock)
-
-    if error == nil && outputBuffer.frameLength > 0 {
-      player.scheduleBuffer(outputBuffer, completionHandler: nil)
+    player.scheduleBuffer(buffer, completionHandler: nil)
+    
+    if !player.isPlaying {
+      player.play()
     }
   }
 

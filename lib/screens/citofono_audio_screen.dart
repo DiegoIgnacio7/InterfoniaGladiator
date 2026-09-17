@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:flutter/services.dart'; // 🔥 NUEVO: Para el MethodChannel
 
 import '../config.dart';
 import '../helpers/citofono_call_utils.dart';
@@ -35,6 +37,7 @@ class CitofonoAudioScreen extends StatefulWidget {
 
 class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
   final Esp32AudioBridge _bridge = Esp32AudioBridge();
+  static const MethodChannel _nativeAudioTrack = MethodChannel('gladiator/citofono_audio_track');
 
   IO.Socket? _socket;
   Timer? _statsTimer;
@@ -187,7 +190,6 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
         await _finalizar(reason: 'handset_hangup');
       }
     } catch (_) {
-      // Si el equipo no informa hook físico, la llamada sigue funcionando con los botones en pantalla.
     } finally {
       _checkingHandset = false;
     }
@@ -268,6 +270,16 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
       await _bridge.start();
       _bridge.setMuted(_muted);
       await _bridge.setUseSpeaker(_speakerOn);
+      
+      if (Platform.isIOS) {
+        try {
+          await _nativeAudioTrack.invokeMethod<void>('initAudio');
+          debugPrint('[CITOFONO_IOS] Motor de reproducción AVAudioEngine INICIADO.');
+        } catch (e) {
+          debugPrint('[CITOFONO_IOS] Fallo al iniciar el motor AVAudioEngine: $e');
+        }
+      }
+
       if (!mounted) return;
 
       if (_bridge.playerFailed && _bridge.recorderFailed) {
@@ -301,6 +313,12 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
 
     _pollTimer?.cancel();
     _handsetTimer?.cancel();
+
+    if (Platform.isIOS) {
+      try {
+        await _nativeAudioTrack.invokeMethod<void>('stopAudio');
+      } catch (_) {}
+    }
 
     try {
       if (!remoto) {
