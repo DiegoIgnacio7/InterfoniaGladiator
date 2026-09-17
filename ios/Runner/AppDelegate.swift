@@ -16,9 +16,10 @@ import AVFoundation
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
 
-    let controller : FlutterViewController = window?.rootViewController as! FlutterViewController
+    
+    let registrar = self.registrar(forPlugin: "CitofonoAudioPlugin")!
     let audioChannel = FlutterMethodChannel(name: "gladiator/citofono_audio_track",
-                                            binaryMessenger: controller.binaryMessenger)
+                                            binaryMessenger: registrar.messenger())
 
     audioChannel.setMethodCallHandler({
       [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
@@ -43,7 +44,6 @@ import AVFoundation
       }
     })
 
-    
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
