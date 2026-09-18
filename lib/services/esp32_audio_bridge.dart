@@ -24,30 +24,33 @@ String _wsBaseUrl() {
 ///
 /// Formato esperado por el ESP32:
 /// - PCM16 mono
-/// - 16 kHz (modo voz alta calidad)
+/// - 16 kHz (forzado a alta fidelidad y compatibilidad iOS)
 /// - little-endian
 /// - binario crudo por WebSocket, sin JSON/base64/WebRTC
+///
+/// Rutas:
+/// - browser_rx: recibe audio desde el micrófono ESP32
+/// - browser_tx: envía audio del micrófono Flutter hacia el ESP32
 class Esp32AudioBridge {
-  // 🔥 CAMBIO: sampleRate actualizado a 16000
   static const int sampleRate = 16000;
-  static const int micCaptureSampleRate = 48000;
+  static const int micCaptureSampleRate = 16000; // Forzado nativo PCM 16-bit / 16 kHz / Mono
   static const int fallbackPlaybackSampleRate = 48000;
   static const int channels = 1;
   static const int bytesPerSample = 2;
   static const int frameMs = 20;
-  // 🔥 CAMBIO: txFrameBytes ahora es 640 bytes (16000 * 2 * 20 / 1000)
-  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; 
+  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; // 640 bytes @ 16 kHz
 
-  // Factor de downsampling pasa de 6 (48000/8000) a 3 (48000/16000)
-  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate;
+  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // 1
 
-  // Cola mínima de voz en vivo.
+  // Cola mínima de voz en vivo. 25 frames = ~500 ms máximo antes de botar viejo.
   static const int maxQueuedBytes = txFrameBytes * 25;
 
+  // Warmup real del micrófono: absorbemos la latencia inicial del altavoz/micrófono de iOS/Android.
   static const int micWarmupDiscardMs = 1000;
   static const int rxWarmupDiscardMs = 300;
 
-  // Límite duro ampliado (16000 bytes/s * 2 bytes = 32000 B/s + margen)
+  // Límite duro: PCM16 mono 16 kHz = 32000 bytes/s.
+  // Margen ampliado para tolerar fluctuaciones de red de la pila de iOS.
   static const int maxTxBytesPerSecond = 48000;
 
   static const MethodChannel _nativeAudioTrack = MethodChannel('gladiator/citofono_audio_track');
@@ -86,7 +89,7 @@ class Esp32AudioBridge {
   }
 
   FlutterSoundPlayer _player = FlutterSoundPlayer();
-  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  FlutterSoundRecorder _recorder = FlutterSoundRecorder();
 
   WebSocket? _rxSocket;
   WebSocket? _txSocket;
@@ -214,6 +217,7 @@ class Esp32AudioBridge {
 
     _rxSocket!.listen(
       (data) {
+        if (!_started) return;
         if (data is List<int>) {
           final bytes = Uint8List.fromList(data);
           final now = DateTime.now().millisecondsSinceEpoch;
@@ -257,10 +261,10 @@ class Esp32AudioBridge {
     _playbackSampleRate = sampleRate;
 
     if (Platform.isAndroid || Platform.isIOS) {
-      debugPrint('[CITOFONO_AUDIO] player start native AudioTrack $sampleRate...');
+      debugPrint('[CITOFONO_AUDIO] player start native AudioTrack 16000...');
       final native16 = await _tryStartNativePlayer(sampleRate);
       if (native16) {
-        debugPrint('[CITOFONO_AUDIO] native AudioTrack $sampleRate OK');
+        debugPrint('[CITOFONO_AUDIO] native AudioTrack 16000 OK');
         return;
       }
 
@@ -274,10 +278,10 @@ class Esp32AudioBridge {
       }
     }
 
-    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player $sampleRate...');
+    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player 16000...');
     final ok16 = await _tryStartPlayer(sampleRate);
     if (ok16) {
-      debugPrint('[CITOFONO_AUDIO] flutter_sound player $sampleRate OK');
+      debugPrint('[CITOFONO_AUDIO] flutter_sound player 16000 OK');
       return;
     }
 
@@ -376,6 +380,7 @@ class Esp32AudioBridge {
       _micStreamController = StreamController<Uint8List>();
       _micSubscription = _micStreamController!.stream.listen(_enqueueMicBytes);
 
+      // Captura forzada a PCM 16-bit / 16 kHz / Mono
       await _recorder.startRecorder(
         toStream: _micStreamController!.sink,
         codec: Codec.pcm16,
@@ -383,7 +388,7 @@ class Esp32AudioBridge {
         sampleRate: micCaptureSampleRate,
       );
       _recorderStarted = true;
-      debugPrint('[CITOFONO_AUDIO] recorder $micCaptureSampleRate Hz OK -> downsample a $sampleRate Hz');
+      debugPrint('[CITOFONO_AUDIO] recorder ${micCaptureSampleRate} Hz (PCM16 Mono) OK');
     } catch (e, st) {
       _recorderFailed = true;
       _recorderError = e.toString();
@@ -433,9 +438,9 @@ class Esp32AudioBridge {
     }
   }
 
-  // 🔥 CAMBIO: Ahora repetimos las muestras 3 veces (16k -> 48k) en vez de 6
   Uint8List _upsamplePcm16Mono16kTo48k(Uint8List input) {
     final usable = input.length - (input.length % 2);
+    // 16 kHz -> 48 kHz = repetir cada muestra 3 veces.
     final output = Uint8List(usable * 3);
     int out = 0;
 
@@ -464,8 +469,10 @@ class Esp32AudioBridge {
     data[offset + 1] = (v >> 8) & 0xFF;
   }
 
-  // 🔥 CAMBIO: Modificada para downsample de 48k a 16k
   Uint8List _downsampleMic48kTo16k(Uint8List bytes, int incoming) {
+    if (micDownsampleFactor == 1) {
+      return incoming == bytes.length ? bytes : bytes.sublist(0, incoming);
+    }
     Uint8List input;
     if (_micDownsampleCarry.isEmpty) {
       input = incoming == bytes.length ? bytes : bytes.sublist(0, incoming);
@@ -475,7 +482,7 @@ class Esp32AudioBridge {
       input.setRange(_micDownsampleCarry.length, input.length, bytes.sublist(0, incoming));
     }
 
-    const int inBytesPerOutSample = micDownsampleFactor * bytesPerSample; // 6 bytes ahora (3 * 2)
+    final int inBytesPerOutSample = micDownsampleFactor * bytesPerSample;
     final int consumable = input.length - (input.length % inBytesPerOutSample);
     final int carryLen = input.length - consumable;
 
@@ -507,7 +514,7 @@ class Esp32AudioBridge {
   }
 
   void _enqueueMicBytes(Uint8List bytes) {
-    if (_muted) return;
+    if (!_started || _muted) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
     final incoming = bytes.length - (bytes.length % 2);
@@ -526,7 +533,6 @@ class Esp32AudioBridge {
       _micWarmupUntilMs = 0;
     }
 
-    // Usamos el nuevo método de downsample a 16 kHz
     final downsampled = _downsampleMic48kTo16k(bytes, incoming);
     if (downsampled.isEmpty) return;
 
@@ -553,7 +559,7 @@ class Esp32AudioBridge {
 
   void _flushOneTxFrame() {
     final ws = _txSocket;
-    if (ws == null || ws.readyState != WebSocket.open) return;
+    if (!_started || ws == null || ws.readyState != WebSocket.open) return;
     if (!_recorderStarted || _recorderFailed) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -570,7 +576,6 @@ class Esp32AudioBridge {
     }
 
     final frame = Uint8List(txFrameBytes);
-    
     int bytesToExtract = _txQueue.length < txFrameBytes ? _txQueue.length : txFrameBytes;
     bytesToExtract -= bytesToExtract % 2;
 
@@ -617,6 +622,9 @@ class Esp32AudioBridge {
       } catch (_) {}
     }
     _recorderOpened = false;
+
+    // Destrucción/re-inicialización limpia para liberar hardware de audio en iOS
+    _recorder = FlutterSoundRecorder();
   }
 
   Future<void> _safeClosePlayer() async {
@@ -651,20 +659,29 @@ class Esp32AudioBridge {
     _txTimer?.cancel();
     _txTimer = null;
 
+    // 1. Detener micrófono y limpiar componentes de grabación explícitamente
     await _safeStopRecorder();
+
+    // 2. Detener reproducción y liberar buffer
     await _safeClosePlayer();
 
     _txQueue.clear();
     _micDownsampleCarry = Uint8List(0);
 
-    try {
-      await _rxSocket?.close();
-    } catch (_) {}
-    try {
-      await _txSocket?.close();
-    } catch (_) {}
-    _rxSocket = null;
-    _txSocket = null;
+    // 3. Cierre y destrucción estricta de conexiones WebSocket para detener el contador RX/TX
+    if (_rxSocket != null) {
+      try {
+        await _rxSocket!.close();
+      } catch (_) {}
+      _rxSocket = null;
+    }
+
+    if (_txSocket != null) {
+      try {
+        await _txSocket!.close();
+      } catch (_) {}
+      _txSocket = null;
+    }
 
     await _releaseAudioRoute();
 
