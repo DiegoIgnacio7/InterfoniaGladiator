@@ -20,38 +20,22 @@ String _wsBaseUrl() {
   return 'wss://$kBaseUrl';
 }
 
-/// Puente de audio crudo compatible con el backend ESP32 tipo wsAudioServer.
-///
-/// Formato esperado por el ESP32:
-/// - PCM16 mono
-/// - 16 kHz (forzado a alta fidelidad y compatibilidad iOS)
-/// - little-endian
-/// - binario crudo por WebSocket, sin JSON/base64/WebRTC
-///
-/// Rutas:
-/// - browser_rx: recibe audio desde el micrófono ESP32
-/// - browser_tx: envía audio del micrófono Flutter hacia el ESP32
 class Esp32AudioBridge {
-  static const int sampleRate = 16000;
-  static const int micCaptureSampleRate = 16000; // Forzado nativo PCM 16-bit / 16 kHz / Mono
+  // REVERSIÓN A 8 kHz
+  static const int sampleRate = 8000;
+  static const int micCaptureSampleRate = 48000; // Mejor captura base para Android/iOS
   static const int fallbackPlaybackSampleRate = 48000;
   static const int channels = 1;
   static const int bytesPerSample = 2;
   static const int frameMs = 20;
-  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; // 640 bytes @ 16 kHz
+  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; // 320 bytes @ 8 kHz
 
-  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // 1
+  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // Factor 6
 
-  // Cola mínima de voz en vivo. 25 frames = ~500 ms máximo antes de botar viejo.
   static const int maxQueuedBytes = txFrameBytes * 25;
-
-  // Warmup real del micrófono: absorbemos la latencia inicial del altavoz/micrófono de iOS/Android.
   static const int micWarmupDiscardMs = 1000;
   static const int rxWarmupDiscardMs = 300;
-
-  // Límite duro: PCM16 mono 16 kHz = 32000 bytes/s.
-  // Margen ampliado para tolerar fluctuaciones de red de la pila de iOS.
-  static const int maxTxBytesPerSecond = 48000;
+  static const int maxTxBytesPerSecond = 24000;
 
   static const MethodChannel _nativeAudioTrack = MethodChannel('gladiator/citofono_audio_track');
 
@@ -261,10 +245,10 @@ class Esp32AudioBridge {
     _playbackSampleRate = sampleRate;
 
     if (Platform.isAndroid || Platform.isIOS) {
-      debugPrint('[CITOFONO_AUDIO] player start native AudioTrack 16000...');
+      debugPrint('[CITOFONO_AUDIO] player start native AudioTrack 8000...');
       final native16 = await _tryStartNativePlayer(sampleRate);
       if (native16) {
-        debugPrint('[CITOFONO_AUDIO] native AudioTrack 16000 OK');
+        debugPrint('[CITOFONO_AUDIO] native AudioTrack 8000 OK');
         return;
       }
 
@@ -278,10 +262,10 @@ class Esp32AudioBridge {
       }
     }
 
-    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player 16000...');
+    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player 8000...');
     final ok16 = await _tryStartPlayer(sampleRate);
     if (ok16) {
-      debugPrint('[CITOFONO_AUDIO] flutter_sound player 16000 OK');
+      debugPrint('[CITOFONO_AUDIO] flutter_sound player 8000 OK');
       return;
     }
 
@@ -380,7 +364,6 @@ class Esp32AudioBridge {
       _micStreamController = StreamController<Uint8List>();
       _micSubscription = _micStreamController!.stream.listen(_enqueueMicBytes);
 
-      // Captura forzada a PCM 16-bit / 16 kHz / Mono
       await _recorder.startRecorder(
         toStream: _micStreamController!.sink,
         codec: Codec.pcm16,
@@ -388,7 +371,7 @@ class Esp32AudioBridge {
         sampleRate: micCaptureSampleRate,
       );
       _recorderStarted = true;
-      debugPrint('[CITOFONO_AUDIO] recorder ${micCaptureSampleRate} Hz (PCM16 Mono) OK');
+      debugPrint('[CITOFONO_AUDIO] recorder $micCaptureSampleRate Hz (PCM16 Mono) OK');
     } catch (e, st) {
       _recorderFailed = true;
       _recorderError = e.toString();
@@ -403,7 +386,7 @@ class Esp32AudioBridge {
 
     Uint8List payload = bytes;
     if (_playbackSampleRate == fallbackPlaybackSampleRate) {
-      payload = _upsamplePcm16Mono16kTo48k(bytes);
+      payload = _upsamplePcm16Mono8kTo48k(bytes);
     }
 
     if (_usingNativePlayer && _nativePlayerReady) {
@@ -438,16 +421,16 @@ class Esp32AudioBridge {
     }
   }
 
-  Uint8List _upsamplePcm16Mono16kTo48k(Uint8List input) {
+  Uint8List _upsamplePcm16Mono8kTo48k(Uint8List input) {
     final usable = input.length - (input.length % 2);
-    // 16 kHz -> 48 kHz = repetir cada muestra 3 veces.
-    final output = Uint8List(usable * 3);
+    // 8 kHz -> 48 kHz = repetir cada muestra 6 veces.
+    final output = Uint8List(usable * 6);
     int out = 0;
 
     for (int i = 0; i < usable; i += 2) {
       final lo = input[i];
       final hi = input[i + 1];
-      for (int r = 0; r < 3; r++) {
+      for (int r = 0; r < 6; r++) {
         output[out++] = lo;
         output[out++] = hi;
       }
@@ -469,7 +452,7 @@ class Esp32AudioBridge {
     data[offset + 1] = (v >> 8) & 0xFF;
   }
 
-  Uint8List _downsampleMic48kTo16k(Uint8List bytes, int incoming) {
+  Uint8List _downsampleMic48kTo8k(Uint8List bytes, int incoming) {
     if (micDownsampleFactor == 1) {
       return incoming == bytes.length ? bytes : bytes.sublist(0, incoming);
     }
@@ -533,7 +516,7 @@ class Esp32AudioBridge {
       _micWarmupUntilMs = 0;
     }
 
-    final downsampled = _downsampleMic48kTo16k(bytes, incoming);
+    final downsampled = _downsampleMic48kTo8k(bytes, incoming);
     if (downsampled.isEmpty) return;
 
     int start = 0;
@@ -623,7 +606,6 @@ class Esp32AudioBridge {
     }
     _recorderOpened = false;
 
-    // Destrucción/re-inicialización limpia para liberar hardware de audio en iOS
     _recorder = FlutterSoundRecorder();
   }
 
@@ -659,16 +641,12 @@ class Esp32AudioBridge {
     _txTimer?.cancel();
     _txTimer = null;
 
-    // 1. Detener micrófono y limpiar componentes de grabación explícitamente
     await _safeStopRecorder();
-
-    // 2. Detener reproducción y liberar buffer
     await _safeClosePlayer();
 
     _txQueue.clear();
     _micDownsampleCarry = Uint8List(0);
 
-    // 3. Cierre y destrucción estricta de conexiones WebSocket para detener el contador RX/TX
     if (_rxSocket != null) {
       try {
         await _rxSocket!.close();

@@ -6,7 +6,7 @@ import AVFoundation
 @objc class AppDelegate: FlutterAppDelegate {
   private var audioEngine: AVAudioEngine?
   private var playerNode: AVAudioPlayerNode?
-  private var audioFormat16k: AVAudioFormat?
+  private var audioFormat8k: AVAudioFormat?
 
   override func application(
     _ application: UIApplication,
@@ -62,11 +62,12 @@ import AVFoundation
 
     engine.attach(player)
 
-    audioFormat16k = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000.0, channels: 1, interleaved: false)
+    // Entrada PCM ESP32: 8 kHz, 16 bits Mono
+    audioFormat8k = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 8000.0, channels: 1, interleaved: false)
     
-    guard let format16k = audioFormat16k else { return }
+    guard let format8k = audioFormat8k else { return }
 
-    engine.connect(player, to: engine.mainMixerNode, format: format16k)
+    engine.connect(player, to: engine.mainMixerNode, format: format8k)
 
     do {
       try engine.start()
@@ -77,16 +78,14 @@ import AVFoundation
   }
 
   private func playPCMData(_ pcmData: Data) {
-    guard let player = playerNode, let format16k = audioFormat16k else { return }
+    guard let player = playerNode, let format8k = audioFormat8k else { return }
 
-    // Calculamos los frames (1 frame = 2 bytes)
     let frameCount = UInt32(pcmData.count / 2)
     guard frameCount > 0 else { return }
 
-    guard let buffer = AVAudioPCMBuffer(pcmFormat: format16k, frameCapacity: frameCount) else { return }
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: format8k, frameCapacity: frameCount) else { return }
     buffer.frameLength = frameCount
 
-    
     pcmData.withUnsafeBytes { rawBuffer in
         if let sourceAddress = rawBuffer.baseAddress,
            let destinationAddress = buffer.int16ChannelData?[0] {
