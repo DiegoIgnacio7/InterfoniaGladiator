@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config.dart';
+import '../services/recados_excel_service.dart';
 
 class RecadosModal extends StatefulWidget {
   final String miRut;
@@ -21,6 +22,7 @@ class _RecadosModalState extends State<RecadosModal> {
   bool _cargando = true;
   bool _consultando = false;
   bool _ocupado = false;
+  bool _exportando = false;
   bool? _esAdmin;
   String? _error;
   final _busquedaPendientes = TextEditingController();
@@ -213,23 +215,7 @@ class _RecadosModalState extends State<RecadosModal> {
     }
   }
 
-  DateTime? _fechaLocal(dynamic valor) {
-    final parsed = DateTime.tryParse(valor?.toString() ?? '');
-    if (parsed == null) return null;
-    // app.py serializa datetime.utcnow() sin sufijo de zona horaria.
-    final utc = parsed.isUtc
-        ? parsed
-        : DateTime.utc(
-            parsed.year,
-            parsed.month,
-            parsed.day,
-            parsed.hour,
-            parsed.minute,
-            parsed.second,
-            parsed.millisecond,
-            parsed.microsecond);
-    return utc.toLocal();
-  }
+  DateTime? _fechaLocal(dynamic valor) => RecadosExcelService.fechaLocal(valor);
 
   String _dia(DateTime? fecha) {
     if (fecha == null) return 'Fecha no registrada';
@@ -250,8 +236,65 @@ class _RecadosModalState extends State<RecadosModal> {
       .replaceFirst(RegExp(r'^(departamento|depto|dpto)\.?\s*'), '')
       .replaceAll(RegExp(r'[\s\-\.#°º]'), '');
 
+  List<Map<String, dynamic>> _recadosVisibles({required bool resueltos}) {
+    final estado = resueltos ? 'resuelto' : 'pendiente';
+    final consulta = _esAdmin == true
+        ? _normalizarDepartamento(
+            (resueltos ? _busquedaResueltos : _busquedaPendientes).text)
+        : '';
+    DateTime? fechaGrupo(Map<String, dynamic> r) =>
+        (resueltos ? _fechaLocal(r['fecha_resolucion']) : null) ??
+        _fechaLocal(r['fecha_creacion']);
+    return _recados
+        .where((r) =>
+            r['estado'] == estado &&
+            _normalizarDepartamento(r['id_dpto']?.toString() ?? '')
+                .contains(consulta))
+        .toList()
+      ..sort((a, b) {
+        final fechaA = fechaGrupo(a);
+        final fechaB = fechaGrupo(b);
+        if (fechaA == null) return fechaB == null ? 0 : 1;
+        if (fechaB == null) return -1;
+        return fechaB.compareTo(fechaA);
+      });
+  }
+
+  Future<void> _exportarExcel({required bool resueltos}) async {
+    if (_ocupado || _consultando || _esAdmin == null || _error != null) return;
+    final recados = _recadosVisibles(resueltos: resueltos);
+    if (recados.isEmpty) return;
+    setState(() {
+      _ocupado = true;
+      _exportando = true;
+    });
+    try {
+      final guardado =
+          await RecadosExcelService.exportar(recados, resueltos: resueltos);
+      if (guardado && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Excel guardado con ${recados.length} recados.'),
+        ));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo guardar el Excel. Inténtalo nuevamente.'),
+        ));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _ocupado = false;
+          _exportando = false;
+        });
+      }
+    }
+  }
+
   Widget _buildRecados({required bool resueltos}) {
     final controller = resueltos ? _busquedaResueltos : _busquedaPendientes;
+    final cantidad = _recadosVisibles(resueltos: resueltos).length;
     return Column(children: [
       if (_esAdmin == true)
         Padding(
@@ -280,6 +323,36 @@ class _RecadosModalState extends State<RecadosModal> {
             ),
           ),
         ),
+      Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            key: ValueKey('exportar_${resueltos ? 'resueltos' : 'pendientes'}'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF20CDFF),
+              disabledForegroundColor: Colors.white38,
+            ),
+            onPressed: _cargando ||
+                    _consultando ||
+                    _ocupado ||
+                    _esAdmin == null ||
+                    _error != null ||
+                    cantidad == 0
+                ? null
+                : () => _exportarExcel(resueltos: resueltos),
+            icon: _exportando
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.download_outlined),
+            label: Text(_exportando
+                ? 'Guardando Excel…'
+                : 'Exportar a Excel ($cantidad)'),
+          ),
+        ),
+      ),
       Expanded(child: _buildListaRecados(resueltos: resueltos)),
     ]);
   }
@@ -293,19 +366,7 @@ class _RecadosModalState extends State<RecadosModal> {
     DateTime? fechaGrupo(Map<String, dynamic> r) =>
         (resueltos ? _fechaLocal(r['fecha_resolucion']) : null) ??
         _fechaLocal(r['fecha_creacion']);
-    final recados = _recados
-        .where((r) =>
-            r['estado'] == estado &&
-            _normalizarDepartamento(r['id_dpto']?.toString() ?? '')
-                .contains(consulta))
-        .toList()
-      ..sort((a, b) {
-        final fechaA = fechaGrupo(a);
-        final fechaB = fechaGrupo(b);
-        if (fechaA == null) return fechaB == null ? 0 : 1;
-        if (fechaB == null) return -1;
-        return fechaB.compareTo(fechaA);
-      });
+    final recados = _recadosVisibles(resueltos: resueltos);
     final color = resueltos ? const Color(0xFF4CAF50) : const Color(0xFFFFB74D);
     if (recados.isEmpty) {
       return Center(
