@@ -21,21 +21,21 @@ String _wsBaseUrl() {
 }
 
 class Esp32AudioBridge {
-  // REVERSIÓN A 8 kHz
-  static const int sampleRate = 8000;
+  // ACTUALIZACIÓN A 16 kHz SINCRONIZADA CON EL BACKEND
+  static const int sampleRate = 16000;
   static const int micCaptureSampleRate = 48000; // Mejor captura base para Android/iOS
   static const int fallbackPlaybackSampleRate = 48000;
   static const int channels = 1;
   static const int bytesPerSample = 2;
   static const int frameMs = 20;
-  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; // 320 bytes @ 8 kHz
+  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; // 640 bytes @ 16 kHz
 
-  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // Factor 6
+  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // Factor 3
 
   static const int maxQueuedBytes = txFrameBytes * 25;
   static const int micWarmupDiscardMs = 1000;
   static const int rxWarmupDiscardMs = 300;
-  static const int maxTxBytesPerSecond = 24000;
+  static const int maxTxBytesPerSecond = 48000; // Ajustado proporcionalmente para 16kHz
 
   static const MethodChannel _nativeAudioTrack = MethodChannel('gladiator/citofono_audio_track');
 
@@ -193,29 +193,63 @@ class Esp32AudioBridge {
     await _openAudio();
   }
 
+  // APERTURA PARALELA Y CONCURRENTE CON RECONEXIÓN AUTOMÁTICA DE 1 SEGUNDO
   Future<void> _openSockets() async {
     final base = _wsBaseUrl();
 
-    _rxSocket = await WebSocket.connect('$base/browser_rx');
-    _txSocket = await WebSocket.connect('$base/browser_tx');
+    await Future.wait([
+      _conectarRxConReintento(base),
+      _conectarTxConReintento(base),
+    ]);
+  }
 
-    _rxSocket!.listen(
-      (data) {
-        if (!_started) return;
-        if (data is List<int>) {
-          final bytes = Uint8List.fromList(data);
-          final now = DateTime.now().millisecondsSinceEpoch;
-          if (now < _rxWarmupUntilMs) {
-            return;
-          }
-          rxBytes += bytes.length;
-          _feedPlayer(bytes);
-        }
-      },
-      onError: (e) => debugPrint('[CITOFONO_AUDIO] browser_rx error: $e'),
-      onDone: () => debugPrint('[CITOFONO_AUDIO] browser_rx cerrado'),
-      cancelOnError: true,
-    );
+  Future<void> _conectarRxConReintento(String base) async {
+    while (_started && _rxSocket == null) {
+      try {
+        _rxSocket = await WebSocket.connect('$base/browser_rx');
+        _rxSocket!.listen(
+          (data) {
+            if (!_started) return;
+            if (data is List<int>) {
+              final bytes = Uint8List.fromList(data);
+              final now = DateTime.now().millisecondsSinceEpoch;
+              if (now < _rxWarmupUntilMs) {
+                return;
+              }
+              rxBytes += bytes.length;
+              _feedPlayer(bytes);
+            }
+          },
+          onError: (e) {
+            debugPrint('[CITOFONO_AUDIO] browser_rx error: $e');
+            _rxSocket = null;
+          },
+          onDone: () {
+            debugPrint('[CITOFONO_AUDIO] browser_rx cerrado');
+            _rxSocket = null;
+          },
+          cancelOnError: true,
+        );
+        break;
+      } catch (e) {
+        debugPrint('[CITOFONO_AUDIO] Falló browser_rx, reintentando en 1s: $e');
+        _rxSocket = null;
+        await Future.delayed(const Duration(seconds: 1));
+      }
+    }
+  }
+
+  Future<void> _conectarTxConReintento(String base) async {
+    while (_started && _txSocket == null) {
+      try {
+        _txSocket = await WebSocket.connect('$base/browser_tx');
+        break;
+      } catch (e) {
+        debugPrint('[CITOFONO_AUDIO] Falló browser_tx, reintentando en 1s: $e');
+        _txSocket = null;
+        await Future.delayed(const Duration(seconds: 1));
+      }
+    }
   }
 
   Future<void> _openAudio() async {
@@ -245,10 +279,10 @@ class Esp32AudioBridge {
     _playbackSampleRate = sampleRate;
 
     if (Platform.isAndroid || Platform.isIOS) {
-      debugPrint('[CITOFONO_AUDIO] player start native AudioTrack 8000...');
+      debugPrint('[CITOFONO_AUDIO] player start native AudioTrack 16000...');
       final native16 = await _tryStartNativePlayer(sampleRate);
       if (native16) {
-        debugPrint('[CITOFONO_AUDIO] native AudioTrack 8000 OK');
+        debugPrint('[CITOFONO_AUDIO] native AudioTrack 16000 OK');
         return;
       }
 
@@ -262,10 +296,10 @@ class Esp32AudioBridge {
       }
     }
 
-    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player 8000...');
+    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player 16000...');
     final ok16 = await _tryStartPlayer(sampleRate);
     if (ok16) {
-      debugPrint('[CITOFONO_AUDIO] flutter_sound player 8000 OK');
+      debugPrint('[CITOFONO_AUDIO] flutter_sound player 16000 OK');
       return;
     }
 
@@ -386,7 +420,7 @@ class Esp32AudioBridge {
 
     Uint8List payload = bytes;
     if (_playbackSampleRate == fallbackPlaybackSampleRate) {
-      payload = _upsamplePcm16Mono8kTo48k(bytes);
+      payload = _upsamplePcm16Mono16kTo48k(bytes);
     }
 
     if (_usingNativePlayer && _nativePlayerReady) {
@@ -421,16 +455,16 @@ class Esp32AudioBridge {
     }
   }
 
-  Uint8List _upsamplePcm16Mono8kTo48k(Uint8List input) {
+  Uint8List _upsamplePcm16Mono16kTo48k(Uint8List input) {
     final usable = input.length - (input.length % 2);
-    // 8 kHz -> 48 kHz = repetir cada muestra 6 veces.
-    final output = Uint8List(usable * 6);
+    // 16 kHz -> 48 kHz = repetir cada muestra 3 veces.
+    final output = Uint8List(usable * 3);
     int out = 0;
 
     for (int i = 0; i < usable; i += 2) {
       final lo = input[i];
       final hi = input[i + 1];
-      for (int r = 0; r < 6; r++) {
+      for (int r = 0; r < 3; r++) {
         output[out++] = lo;
         output[out++] = hi;
       }
@@ -452,7 +486,7 @@ class Esp32AudioBridge {
     data[offset + 1] = (v >> 8) & 0xFF;
   }
 
-  Uint8List _downsampleMic48kTo8k(Uint8List bytes, int incoming) {
+  Uint8List _downsampleMic48kTo16k(Uint8List bytes, int incoming) {
     if (micDownsampleFactor == 1) {
       return incoming == bytes.length ? bytes : bytes.sublist(0, incoming);
     }
@@ -516,7 +550,7 @@ class Esp32AudioBridge {
       _micWarmupUntilMs = 0;
     }
 
-    final downsampled = _downsampleMic48kTo8k(bytes, incoming);
+    final downsampled = _downsampleMic48kTo16k(bytes, incoming);
     if (downsampled.isEmpty) return;
 
     int start = 0;
@@ -542,7 +576,7 @@ class Esp32AudioBridge {
 
   void _flushOneTxFrame() {
     final ws = _txSocket;
-    if (!_started || ws == null || ws.readyState != WebSocket.open) return;
+    if (!_started || ws == null) return;
     if (!_recorderStarted || _recorderFailed) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
