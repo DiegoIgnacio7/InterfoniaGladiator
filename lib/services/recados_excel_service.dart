@@ -1,9 +1,48 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:excel/excel.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../config.dart';
 
 class RecadosExcelService {
+  static String _normalizarRut(dynamic valor) => (valor?.toString() ?? '')
+      .replaceAll('.', '')
+      .replaceAll('-', '')
+      .trim()
+      .toUpperCase();
+
+  static Future<List<Map<String, dynamic>>> _consultarUsuarios(
+      http.Client client) async {
+    final prefs = await SharedPreferences.getInstance();
+    final rut = _normalizarRut(prefs.getString('rut'));
+    if (rut.isEmpty || prefs.getInt('es_admin') != 1) {
+      throw StateError('No se encontró una sesión de conserjería activa.');
+    }
+    // Ambas consultas existentes cubren residentes y conserjes.
+    final listas = await Future.wait(
+      ['/usuarios-todos', '/usuarios-conserjes'].map((ruta) async {
+        final uri =
+            Uri.parse('$kBaseUrl$ruta').replace(queryParameters: {'rut': rut});
+        final respuesta =
+            await client.get(uri).timeout(const Duration(seconds: 15));
+        if (respuesta.statusCode != 200) {
+          throw StateError(
+              'No se pudieron consultar los nombres de los emisores.');
+        }
+        final datos = jsonDecode(utf8.decode(respuesta.bodyBytes));
+        if (datos is! List || datos.any((u) => u is! Map)) {
+          throw const FormatException('El listado de usuarios no es válido.');
+        }
+        return datos.map((u) => Map<String, dynamic>.from(u as Map)).toList();
+      }),
+    );
+    return listas.expand((usuarios) => usuarios).toList();
+  }
+
   static DateTime? fechaLocal(dynamic valor) {
     final parsed = DateTime.tryParse(valor?.toString() ?? '');
     if (parsed == null) return null;
@@ -22,9 +61,21 @@ class RecadosExcelService {
         .toLocal();
   }
 
-  static Uint8List generar(List<Map<String, dynamic>> recados) {
+  static Uint8List generar(List<Map<String, dynamic>> recados,
+      {List<Map<String, dynamic>> usuarios = const []}) {
     if (recados.isEmpty) {
       throw ArgumentError('No hay recados para exportar.');
+    }
+    final nombresPorRut = <String, String>{};
+    for (final usuario in usuarios) {
+      final rut = _normalizarRut(usuario['rut_usuario']);
+      // Se incorporan todos los componentes que entregue la consulta.
+      // Actualmente el servidor no expone apellido_2.
+      final nombre = ['nombres', 'apellido_1', 'apellido_2']
+          .map((campo) => usuario[campo]?.toString().trim() ?? '')
+          .where((parte) => parte.isNotEmpty)
+          .join(' ');
+      if (rut.isNotEmpty && nombre.isNotEmpty) nombresPorRut[rut] = nombre;
     }
     final libro = Excel.createExcel();
     libro.rename('Sheet1', 'Recados');
@@ -32,6 +83,7 @@ class RecadosExcelService {
     const columnas = [
       'Departamento',
       'RUT del emisor',
+      'Nombre del emisor',
       'Título',
       'Descripción',
       'Estado',
@@ -39,7 +91,7 @@ class RecadosExcelService {
       'Fecha de resolución',
     ];
     hoja.appendRow(columnas.map((s) => TextCellValue(s)).toList());
-    const anchos = [18.0, 22.0, 36.0, 70.0, 16.0, 24.0, 24.0];
+    const anchos = [18.0, 22.0, 38.0, 36.0, 70.0, 16.0, 24.0, 24.0];
     for (var col = 0; col < columnas.length; col++) {
       hoja.setColumnWidth(col, anchos[col]);
       hoja
@@ -62,6 +114,8 @@ class RecadosExcelService {
       hoja.appendRow([
         TextCellValue(recado['id_dpto']?.toString() ?? ''),
         TextCellValue(rutEmisor.isEmpty ? 'No registrado' : rutEmisor),
+        TextCellValue(
+            nombresPorRut[_normalizarRut(rutEmisor)] ?? 'No registrado'),
         TextCellValue(recado['titulo']?.toString() ?? ''),
         TextCellValue(recado['descripcion']?.toString() ?? ''),
         TextCellValue(switch (recado['estado']) {
@@ -83,7 +137,7 @@ class RecadosExcelService {
               recado['estado'] == 'resuelto' ? '#3FAF46' : '#C9211E'),
           verticalAlign: VerticalAlign.Top,
           textWrapping: TextWrapping.WrapText,
-          numberFormat: col >= 5
+          numberFormat: col >= 6
               ? NumFormat.custom(formatCode: 'dd/mm/yyyy hh:mm')
               : NumFormat.standard_0,
         );
@@ -98,8 +152,16 @@ class RecadosExcelService {
 
   /// Devuelve false si el usuario cancela el selector de guardado.
   static Future<bool> exportar(List<Map<String, dynamic>> recados,
-      {required bool resueltos}) async {
-    final bytes = generar(recados);
+      {required bool resueltos, http.Client? client}) async {
+    if (recados.isEmpty) throw ArgumentError('No hay recados para exportar.');
+    final consulta = client ?? http.Client();
+    final List<Map<String, dynamic>> usuarios;
+    try {
+      usuarios = await _consultarUsuarios(consulta);
+    } finally {
+      if (client == null) consulta.close();
+    }
+    final bytes = generar(recados, usuarios: usuarios);
     final fecha = DateTime.now().toIso8601String().replaceAll(':', '-');
     final nombre =
         'recados_${resueltos ? 'resueltos' : 'pendientes'}_$fecha.xlsx';
