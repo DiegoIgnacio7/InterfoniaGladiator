@@ -31,6 +31,7 @@ class RecadosExcelService {
     final hoja = libro['Recados'];
     const columnas = [
       'Departamento',
+      'RUT del emisor',
       'Título',
       'Descripción',
       'Estado',
@@ -38,7 +39,7 @@ class RecadosExcelService {
       'Fecha de resolución',
     ];
     hoja.appendRow(columnas.map((s) => TextCellValue(s)).toList());
-    const anchos = [18.0, 36.0, 70.0, 16.0, 24.0, 24.0];
+    const anchos = [18.0, 22.0, 36.0, 70.0, 16.0, 24.0, 24.0];
     for (var col = 0; col < columnas.length; col++) {
       hoja.setColumnWidth(col, anchos[col]);
       hoja
@@ -46,7 +47,7 @@ class RecadosExcelService {
           .cellStyle = CellStyle(
         bold: true,
         fontColorHex: ExcelColor.white,
-        backgroundColorHex: ExcelColor.fromHexString('#0F172A'),
+        backgroundColorHex: ExcelColor.fromHexString('#5983B0'),
       );
     }
     hoja.setRowHeight(0, 26);
@@ -56,9 +57,11 @@ class RecadosExcelService {
     }
 
     for (final recado in recados) {
+      final rutEmisor = recado['rut_emisor']?.toString().trim() ?? '';
       // TextCellValue conserva identificadores y evita interpretar fórmulas.
       hoja.appendRow([
         TextCellValue(recado['id_dpto']?.toString() ?? ''),
+        TextCellValue(rutEmisor.isEmpty ? 'No registrado' : rutEmisor),
         TextCellValue(recado['titulo']?.toString() ?? ''),
         TextCellValue(recado['descripcion']?.toString() ?? ''),
         TextCellValue(switch (recado['estado']) {
@@ -74,9 +77,13 @@ class RecadosExcelService {
         hoja
             .cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: fila))
             .cellStyle = CellStyle(
+          bold: true,
+          fontColorHex: ExcelColor.white,
+          backgroundColorHex: ExcelColor.fromHexString(
+              recado['estado'] == 'resuelto' ? '#3FAF46' : '#C9211E'),
           verticalAlign: VerticalAlign.Top,
           textWrapping: TextWrapping.WrapText,
-          numberFormat: col >= 4
+          numberFormat: col >= 5
               ? NumFormat.custom(formatCode: 'dd/mm/yyyy hh:mm')
               : NumFormat.standard_0,
         );

@@ -261,7 +261,7 @@ class _RecadosModalState extends State<RecadosModal> {
   }
 
   Future<void> _exportarExcel({required bool resueltos}) async {
-    if (_ocupado || _consultando || _esAdmin == null || _error != null) return;
+    if (_ocupado || _consultando || _esAdmin != true || _error != null) return;
     final recados = _recadosVisibles(resueltos: resueltos);
     if (recados.isEmpty) return;
     setState(() {
@@ -323,36 +323,38 @@ class _RecadosModalState extends State<RecadosModal> {
             ),
           ),
         ),
-      Padding(
-        padding: const EdgeInsets.only(top: 12),
-        child: SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            key: ValueKey('exportar_${resueltos ? 'resueltos' : 'pendientes'}'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFF20CDFF),
-              disabledForegroundColor: Colors.white38,
+      if (_esAdmin == true)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: ValueKey(
+                  'exportar_${resueltos ? 'resueltos' : 'pendientes'}'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF20CDFF),
+                disabledForegroundColor: Colors.white38,
+              ),
+              onPressed: _cargando ||
+                      _consultando ||
+                      _ocupado ||
+                      _esAdmin == null ||
+                      _error != null ||
+                      cantidad == 0
+                  ? null
+                  : () => _exportarExcel(resueltos: resueltos),
+              icon: _exportando
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.download_outlined),
+              label: Text(_exportando
+                  ? 'Guardando Excel…'
+                  : 'Exportar a Excel ($cantidad)'),
             ),
-            onPressed: _cargando ||
-                    _consultando ||
-                    _ocupado ||
-                    _esAdmin == null ||
-                    _error != null ||
-                    cantidad == 0
-                ? null
-                : () => _exportarExcel(resueltos: resueltos),
-            icon: _exportando
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.download_outlined),
-            label: Text(_exportando
-                ? 'Guardando Excel…'
-                : 'Exportar a Excel ($cantidad)'),
           ),
         ),
-      ),
       Expanded(child: _buildListaRecados(resueltos: resueltos)),
     ]);
   }
@@ -385,6 +387,8 @@ class _RecadosModalState extends State<RecadosModal> {
       separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemBuilder: (_, i) {
         final r = recados[i];
+        final rutEmisor = r['rut_emisor']?.toString().trim() ?? '';
+        final rutVisible = rutEmisor.isEmpty ? 'No registrado' : rutEmisor;
         final propio = _normalizarRut(r['rut_emisor']?.toString() ?? '') ==
             _normalizarRut(widget.miRut);
         final dia = _dia(fechaGrupo(r));
@@ -430,7 +434,8 @@ class _RecadosModalState extends State<RecadosModal> {
                         color: Colors.white,
                         fontSize: 16,
                         fontWeight: FontWeight.w600)),
-                subtitle: Text('Departamento ${r['id_dpto']}',
+                subtitle: Text(
+                    'Departamento ${r['id_dpto']}\nRUT del emisor: $rutVisible',
                     style: const TextStyle(color: Colors.white70)),
                 children: [
                   Text(r['descripcion'].toString(),
