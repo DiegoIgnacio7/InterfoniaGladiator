@@ -66,16 +66,10 @@ class RecadosExcelService {
     if (recados.isEmpty) {
       throw ArgumentError('No hay recados para exportar.');
     }
-    final nombresPorRut = <String, String>{};
+    final usuariosPorRut = <String, Map<String, dynamic>>{};
     for (final usuario in usuarios) {
       final rut = _normalizarRut(usuario['rut_usuario']);
-      // Se incorporan todos los componentes que entregue la consulta.
-      // Actualmente el servidor no expone apellido_2.
-      final nombre = ['nombres', 'apellido_1', 'apellido_2']
-          .map((campo) => usuario[campo]?.toString().trim() ?? '')
-          .where((parte) => parte.isNotEmpty)
-          .join(' ');
-      if (rut.isNotEmpty && nombre.isNotEmpty) nombresPorRut[rut] = nombre;
+      if (rut.isNotEmpty) usuariosPorRut[rut] = usuario;
     }
     final libro = Excel.createExcel();
     libro.rename('Sheet1', 'Recados');
@@ -84,6 +78,8 @@ class RecadosExcelService {
       'Departamento',
       'RUT del emisor',
       'Nombre del emisor',
+      'Apellido paterno',
+      'Apellido materno',
       'Título',
       'Descripción',
       'Estado',
@@ -91,7 +87,7 @@ class RecadosExcelService {
       'Fecha de resolución',
     ];
     hoja.appendRow(columnas.map((s) => TextCellValue(s)).toList());
-    const anchos = [18.0, 22.0, 38.0, 36.0, 70.0, 16.0, 24.0, 24.0];
+    const anchos = [18.0, 22.0, 30.0, 24.0, 24.0, 36.0, 70.0, 16.0, 24.0, 24.0];
     for (var col = 0; col < columnas.length; col++) {
       hoja.setColumnWidth(col, anchos[col]);
       hoja
@@ -110,12 +106,19 @@ class RecadosExcelService {
 
     for (final recado in recados) {
       final rutEmisor = recado['rut_emisor']?.toString().trim() ?? '';
+      final emisor = usuariosPorRut[_normalizarRut(rutEmisor)];
+      String datoEmisor(String campo) {
+        final valor = emisor?[campo]?.toString().trim() ?? '';
+        return valor.isEmpty ? 'No registrado' : valor;
+      }
+
       // TextCellValue conserva identificadores y evita interpretar fórmulas.
       hoja.appendRow([
         TextCellValue(recado['id_dpto']?.toString() ?? ''),
         TextCellValue(rutEmisor.isEmpty ? 'No registrado' : rutEmisor),
-        TextCellValue(
-            nombresPorRut[_normalizarRut(rutEmisor)] ?? 'No registrado'),
+        TextCellValue(datoEmisor('nombres')),
+        TextCellValue(datoEmisor('apellido_1')),
+        TextCellValue(datoEmisor('apellido_2')),
         TextCellValue(recado['titulo']?.toString() ?? ''),
         TextCellValue(recado['descripcion']?.toString() ?? ''),
         TextCellValue(switch (recado['estado']) {
@@ -137,7 +140,7 @@ class RecadosExcelService {
               recado['estado'] == 'resuelto' ? '#3FAF46' : '#C9211E'),
           verticalAlign: VerticalAlign.Top,
           textWrapping: TextWrapping.WrapText,
-          numberFormat: col >= 6
+          numberFormat: col >= 8
               ? NumFormat.custom(formatCode: 'dd/mm/yyyy hh:mm')
               : NumFormat.standard_0,
         );

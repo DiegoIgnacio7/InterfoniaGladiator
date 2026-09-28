@@ -21,6 +21,8 @@ class _MensajesModalState extends State<MensajesModal> {
   Timer? _pollTimer;
 
   bool _loadingContactos = true;
+  bool _consultaContactosEnCurso = false;
+  final Map<String, Map<String, dynamic>> _ultimaPreviaPorContacto = {};
   bool _loadingMensajes = false;
   String? _error;
   String _unidadPropia = 'Depto/Casa';
@@ -91,6 +93,8 @@ class _MensajesModalState extends State<MensajesModal> {
   }
 
   Future<void> _cargarContactos({bool silencioso = false}) async {
+    if (!mounted || _consultaContactosEnCurso) return;
+    _consultaContactosEnCurso = true;
     if (!silencioso) {
       setState(() {
         _loadingContactos = true;
@@ -114,6 +118,21 @@ class _MensajesModalState extends State<MensajesModal> {
           .toList();
 
       if (!mounted) return;
+      for (final contacto in contactos) {
+        final rut = _contactoRut(contacto);
+        if (rut.isEmpty) continue;
+        final ultimo = contacto['last_message'];
+        final tienePrevia = ultimo is Map &&
+            (ultimo['es_imagen'] == true ||
+                ultimo['es_imagen'] == 1 ||
+                (ultimo['mensaje'] ?? '').toString().trim().isNotEmpty);
+        if (tienePrevia) {
+          _ultimaPreviaPorContacto[rut] = Map<String, dynamic>.from(ultimo);
+        } else if (_ultimaPreviaPorContacto.containsKey(rut)) {
+          // Una respuesta sin vista previa no borra la última válida.
+          contacto['last_message'] = _ultimaPreviaPorContacto[rut];
+        }
+      }
       setState(() {
         _contactos = contactos;
         _unidadPropia = (data['unidad_label'] ?? 'Depto/Casa').toString();
@@ -128,6 +147,8 @@ class _MensajesModalState extends State<MensajesModal> {
           _error = 'No se pudieron cargar contactos: $e';
         });
       }
+    } finally {
+      _consultaContactosEnCurso = false;
     }
   }
 
