@@ -196,8 +196,14 @@ class Esp32AudioBridge {
   Future<void> _openSockets() async {
     final base = _wsBaseUrl();
 
-    _rxSocket = await WebSocket.connect('$base/browser_rx');
-    _txSocket = await WebSocket.connect('$base/browser_tx');
+    // Conexión en paralelo para evitar desfases de registro en el servidor[cite: 16]
+    final sockets = await Future.wait([
+      WebSocket.connect('$base/browser_rx'),
+      WebSocket.connect('$base/browser_tx'),
+    ]);
+
+    _rxSocket = sockets[0];
+    _txSocket = sockets[1];
 
     _rxSocket!.listen(
       (data) {
