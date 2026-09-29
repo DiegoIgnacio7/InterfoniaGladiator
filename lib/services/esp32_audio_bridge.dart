@@ -22,7 +22,7 @@ String _wsBaseUrl() {
 
 class Esp32AudioBridge {
   // REVERSIÓN A 8 kHz
-  static const int sampleRate = 8000;
+  static const int sampleRate = 16000;
   static const int micCaptureSampleRate = 48000; // Mejor captura base para Android/iOS
   static const int fallbackPlaybackSampleRate = 48000;
   static const int channels = 1;
@@ -193,17 +193,13 @@ class Esp32AudioBridge {
     await _openAudio();
   }
 
-  Future<void> _openSockets() async {
+Future<void> _openSockets() async {
     final base = _wsBaseUrl();
 
-    // Conexión en paralelo para evitar desfases de registro en el servidor[cite: 16]
-    final sockets = await Future.wait([
-      WebSocket.connect('$base/browser_rx'),
-      WebSocket.connect('$base/browser_tx'),
-    ]);
-
-    _rxSocket = sockets[0];
-    _txSocket = sockets[1];
+    // Apertura secuencial para evitar condiciones de carrera en el servidor
+    _rxSocket = await WebSocket.connect('$base/browser_rx');
+    await Future.delayed(const Duration(milliseconds: 100));
+    _txSocket = await WebSocket.connect('$base/browser_tx');
 
     _rxSocket!.listen(
       (data) {
