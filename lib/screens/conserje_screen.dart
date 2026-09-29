@@ -32,6 +32,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
   late IO.Socket socket;
   Set<String> rutosOcupados = {};
   bool _socketConectado = false;
+  bool _enviandoAviso = false;
   final _ringtonePlayer = FlutterRingtonePlayer();
   bool _dialogoEntranteAbierto = false;
 
@@ -496,6 +497,47 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
     );
   }
 
+  Future<void> _enviarAviso() async {
+    if (_enviandoAviso) return;
+    setState(() => _enviandoAviso = true);
+
+    String resultado;
+    try {
+      final response = await http.post(
+        Uri.parse('$kBaseUrl/api/esp32/aviso'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'mensaje': 'Hola ESP32, aviso desde la app'}),
+      ).timeout(const Duration(seconds: 10));
+
+      Map<String, dynamic> data = {};
+      try {
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        if (decoded is Map<String, dynamic>) data = decoded;
+      } on FormatException {
+        // El servidor puede responder con HTML si la ruta aún no existe.
+      }
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        resultado = 'Aviso enviado. Revisa el monitor serie de Arduino.';
+      } else if (response.statusCode == 404) {
+        resultado = 'El servidor aún no tiene habilitado el envío de avisos.';
+      } else {
+        resultado = data['error']?.toString() ?? 'No se pudo enviar el aviso.';
+      }
+    } on TimeoutException {
+      resultado = 'El servidor no respondió a tiempo. No se pudo confirmar el envío.';
+    } catch (_) {
+      resultado = 'No se pudo confirmar el envío. Revisa la conexión.';
+    } finally {
+      if (mounted) setState(() => _enviandoAviso = false);
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(resultado)));
+  }
+
   void _abrirRecados() {
     showModalBottomSheet(
       context: context,
@@ -597,6 +639,20 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
               backgroundColor: const Color(0xFF333344),
               onPressed: _abrirHistorial,
               child: const Icon(Icons.history_rounded, color: Colors.white),
+            ),
+          ),
+          Positioned(
+            bottom: 174,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: FloatingActionButton.extended(
+                heroTag: 'fab_aviso',
+                backgroundColor: const Color(0xFFEF6C00),
+                onPressed: _enviandoAviso ? null : _enviarAviso,
+                icon: const Icon(Icons.notifications_active_rounded, color: Colors.white),
+                label: Text(_enviandoAviso ? 'Enviando...' : 'Aviso', style: const TextStyle(color: Colors.white)),
+              ),
             ),
           ),
           Positioned(
