@@ -21,16 +21,15 @@ String _wsBaseUrl() {
 }
 
 class Esp32AudioBridge {
-  // REVERSIÓN A 8 kHz
   static const int sampleRate = 8000;
-  static const int micCaptureSampleRate = 48000; // Mejor captura base para Android/iOS
+  static const int micCaptureSampleRate = 48000; 
   static const int fallbackPlaybackSampleRate = 48000;
   static const int channels = 1;
   static const int bytesPerSample = 2;
   static const int frameMs = 20;
-  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; // 320 bytes @ 8 kHz
+  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; 
 
-  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // Factor 6
+  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; 
 
   static const int maxQueuedBytes = txFrameBytes * 25;
   static const int micWarmupDiscardMs = 1000;
@@ -75,7 +74,8 @@ class Esp32AudioBridge {
   FlutterSoundPlayer _player = FlutterSoundPlayer();
   FlutterSoundRecorder _recorder = FlutterSoundRecorder();
 
-  WebSocket? _audioSocket; // Socket unificado bidireccional
+  // Socket unificado único para la app
+  WebSocket? _audioSocket;
   StreamController<Uint8List>? _micStreamController;
   StreamSubscription<Uint8List>? _micSubscription;
   Timer? _txTimer;
@@ -188,14 +188,14 @@ class Esp32AudioBridge {
     }
 
     await _applyAudioRoute();
-    await _openSocket();
+    await _openSockets();
     await _openAudio();
   }
 
-  Future<void> _openSocket() async {
+  Future<void> _openSockets() async {
     final base = _wsBaseUrl();
 
-    // Conexión al único WebSocket unificado del backend
+    // Conexión al endpoint unificado /browser_audio
     _audioSocket = await WebSocket.connect('$base/browser_audio');
 
     _audioSocket!.listen(
@@ -244,46 +244,29 @@ class Esp32AudioBridge {
     _playbackSampleRate = sampleRate;
 
     if (Platform.isAndroid || Platform.isIOS) {
-      debugPrint('[CITOFONO_AUDIO] player start native AudioTrack 8000...');
       final native16 = await _tryStartNativePlayer(sampleRate);
-      if (native16) {
-        debugPrint('[CITOFONO_AUDIO] native AudioTrack 8000 OK');
-        return;
-      }
+      if (native16) return;
 
-      debugPrint('[CITOFONO_AUDIO] retry native AudioTrack 48000...');
       await Future<void>.delayed(const Duration(milliseconds: 200));
       final native48 = await _tryStartNativePlayer(fallbackPlaybackSampleRate);
       if (native48) {
         _playbackSampleRate = fallbackPlaybackSampleRate;
-        debugPrint('[CITOFONO_AUDIO] native AudioTrack 48000 OK');
         return;
       }
     }
 
-    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player 8000...');
     final ok16 = await _tryStartPlayer(sampleRate);
-    if (ok16) {
-      debugPrint('[CITOFONO_AUDIO] flutter_sound player 8000 OK');
-      return;
-    }
+    if (ok16) return;
 
-    debugPrint('[CITOFONO_AUDIO] retry flutter_sound player 48000...');
     await Future<void>.delayed(const Duration(milliseconds: 300));
     final ok48 = await _tryStartPlayer(fallbackPlaybackSampleRate);
     if (ok48) {
       _playbackSampleRate = fallbackPlaybackSampleRate;
-      debugPrint('[CITOFONO_AUDIO] flutter_sound player 48000 OK');
       return;
     }
 
     _playerFailed = true;
-    _playerReady = false;
-    _playerStarted = false;
-    _usingNativePlayer = false;
-    _nativePlayerReady = false;
     _playerError ??= 'Este dispositivo no soporta reproducción PCM del citófono.';
-    debugPrint('[CITOFONO_AUDIO] player disabled on this device: $_playerError');
   }
 
   Future<bool> _tryStartNativePlayer(int rate) async {
@@ -298,20 +281,13 @@ class Esp32AudioBridge {
         _nativePlayerReady = true;
         _playerReady = true;
         _playerStarted = true;
-        _playerFailed = false;
         _playbackSampleRate = rate;
         _playerError = null;
         return true;
       }
-      _playerError = 'Native AudioTrack no inició en $rate Hz';
       return false;
-    } catch (e, st) {
+    } catch (e) {
       _playerError = e.toString();
-      debugPrint('[CITOFONO_AUDIO] native AudioTrack $rate FAIL: $e');
-      debugPrint('$st');
-      try {
-        await _nativeAudioTrack.invokeMethod<void>('stop');
-      } catch (_) {}
       _usingNativePlayer = false;
       _nativePlayerReady = false;
       return false;
@@ -341,10 +317,8 @@ class Esp32AudioBridge {
       _playerStarted = true;
       _playbackSampleRate = rate;
       return true;
-    } catch (e, st) {
+    } catch (e) {
       _playerError = e.toString();
-      debugPrint('[CITOFONO_AUDIO] player $rate FAIL: $e');
-      debugPrint('$st');
       await _safeClosePlayer();
       return false;
     }
@@ -370,12 +344,9 @@ class Esp32AudioBridge {
         sampleRate: micCaptureSampleRate,
       );
       _recorderStarted = true;
-      debugPrint('[CITOFONO_AUDIO] recorder $micCaptureSampleRate Hz (PCM16 Mono) OK');
-    } catch (e, st) {
+    } catch (e) {
       _recorderFailed = true;
       _recorderError = e.toString();
-      debugPrint('[CITOFONO_AUDIO] recorder FAIL: $e');
-      debugPrint('$st');
       await _safeStopRecorder();
     }
   }
@@ -397,7 +368,6 @@ class Esp32AudioBridge {
         _playerReady = false;
         _nativePlayerReady = false;
         _playerError = e.toString();
-        debugPrint('[CITOFONO_AUDIO] native AudioTrack write FAIL: $e');
       });
       return;
     }
@@ -411,12 +381,10 @@ class Esp32AudioBridge {
         final end = (offset + maxChunk > payload.length) ? payload.length : offset + maxChunk;
         sink.add(payload.sublist(offset, end));
       }
-    } catch (e, st) {
+    } catch (e) {
       _playerFailed = true;
       _playerReady = false;
       _playerError = e.toString();
-      debugPrint('[CITOFONO_AUDIO] player feed FAIL: $e');
-      debugPrint('$st');
     }
   }
 
@@ -545,12 +513,6 @@ class Esp32AudioBridge {
 
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_txWindowStartMs == 0 || now - _txWindowStartMs >= 1000) {
-      debugPrint(
-        'ESP32 browser_audio rate: ${_txWindowBytes} B/s, '
-        'dropped/window: $_txWindowDropped, queue: ${_txQueue.length}, '
-        'mic resample: $resampledMicInputBytes->$resampledMicOutputBytes B, '
-        'warmup: $warmupDroppedTxBytes B',
-      );
       _txWindowStartMs = now;
       _txWindowBytes = 0;
       _txWindowDropped = 0;
