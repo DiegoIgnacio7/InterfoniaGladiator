@@ -1,3 +1,4 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -40,6 +41,49 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
   void _tocarTono() => _ringtonePlayer.playRingtone();
   void _detenerTono() => _ringtonePlayer.stop();
 
+  // Función para registrar y actualizar el Token FCM
+
+  Future<void> _registrarTokenFCM(String rut) async {
+    try {
+      // 1. Pedir permisos a iOS/Android (Obligatorio en iPhone)
+      NotificationSettings settings = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+
+      // 2. Si el usuario acepta, obtenemos el token
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        String? token = await FirebaseMessaging.instance.getToken();
+        
+        if (token != null) {
+          await http.post(
+            Uri.parse('$kBaseUrl/registrar-token'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'rut': rut, 'token': token}),
+          );
+          debugPrint('✅ Token FCM enviado al servidor');
+        }
+      } else {
+        debugPrint('❌ Permisos de notificación denegados por el usuario');
+      }
+
+      // 3. Manejo de renovación de tokens
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+        await http.post(
+          Uri.parse('$kBaseUrl/registrar-token'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'rut': rut, 'token': newToken}),
+        );
+        debugPrint('🔄 Token FCM renovado y enviado al servidor');
+      });
+    } catch (e) {
+      debugPrint('❌ Error obteniendo token FCM: $e');
+    }
+  }
+  // =========================================================
+  // =========================================================
+
   @override
   void initState() {
     super.initState();
@@ -53,10 +97,15 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       miNombre = prefs.getString('nombre') ?? '';
       miDpto = prefs.getString('dpto') ?? '';
     });
+    
+    // NUEVO: Ejecutar el registro del token si el RUT existe
+    if (miRut.isNotEmpty) {
+      _registrarTokenFCM(miRut);
+    }
+
     _conectarSocket();
     _abrirMensajesSiPendiente();
   }
-
 
   Future<void> _abrirMensajesSiPendiente() async {
     final prefs = await SharedPreferences.getInstance();
@@ -135,7 +184,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       );
     });
 
-
     socket.on('chat-message', (data) {
       if (!mounted || data is! Map) return;
       final receptor = (data['rut_receptor'] ?? '').toString();
@@ -185,8 +233,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       }
     });
   }
-
-
 
   void _mostrarLlamadaEntrante(dynamic data) {
     if (!mounted) return;
@@ -284,8 +330,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       _dialogoEntranteAbierto = false;
     });
   }
-
-
 
   Future<void> _rechazarEntrante(dynamic data) async {
     _detenerTono();
@@ -613,7 +657,7 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                           Icon(Icons.apartment_rounded, color: Color(0xFF6366F1), size: 28),
                           SizedBox(width: 10),
                           Text(
-                            'Citofonía App',
+                            'Gladiator Interfonia',
                             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
                           ),
                         ],
@@ -800,7 +844,7 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                             ),
                             // CARD 2: LLAMAR CONSERJERÍA
                             InkWell(
-                              onTap: () => _llamar('000', 'audio'),
+                              onTap: () => _llamar('11111111', 'audio'),
                               borderRadius: BorderRadius.circular(20),
                               child: Container(
                                 padding: const EdgeInsets.all(16),

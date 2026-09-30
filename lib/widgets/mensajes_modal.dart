@@ -51,7 +51,8 @@ class _MensajesModalState extends State<MensajesModal> {
     super.dispose();
   }
 
-  String _contactoRut(Map<String, dynamic> c) => (c['rut_usuario'] ?? '').toString();
+  String _contactoRut(Map<String, dynamic> c) =>
+      (c['rut_usuario'] ?? '').toString();
 
   String _contactoTitulo(Map<String, dynamic> c) {
     final display = (c['display_name'] ?? '').toString().trim();
@@ -75,8 +76,7 @@ class _MensajesModalState extends State<MensajesModal> {
 
     final lastMessage = Map<String, dynamic>.from(rawLastMessage);
     final esImagen =
-        lastMessage['es_imagen'] == true ||
-            lastMessage['es_imagen'] == 1;
+        lastMessage['es_imagen'] == true || lastMessage['es_imagen'] == 1;
     final esMio = lastMessage['is_mine'] == true;
     final prefijo = esMio ? 'Tú: ' : '';
 
@@ -207,15 +207,17 @@ class _MensajesModalState extends State<MensajesModal> {
 
     _mensajeController.clear();
     try {
-      final res = await http.post(
-        Uri.parse('$kBaseUrl/api/chat/messages'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'rut_emisor': widget.miRut,
-          'rut_receptor': _contactoRut(contacto),
-          'mensaje': texto,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final res = await http
+          .post(
+            Uri.parse('$kBaseUrl/api/chat/messages'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'rut_emisor': widget.miRut,
+              'rut_receptor': _contactoRut(contacto),
+              'mensaje': texto,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       if (res.statusCode != 200 || data['success'] != true) {
@@ -226,6 +228,83 @@ class _MensajesModalState extends State<MensajesModal> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('No se pudo enviar: $e')),
+      );
+    }
+  }
+
+  Future<void> _eliminarMensaje(int mensajeId) async {
+    try {
+      final res = await http
+          .delete(
+            Uri.parse('$kBaseUrl/api/chat/message/$mensajeId'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'rut': widget.miRut}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode != 200 || data['success'] != true) {
+        throw Exception(data['error'] ?? res.body);
+      }
+      await _cargarMensajes(silencioso: true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo eliminar el mensaje: $e')),
+      );
+    }
+  }
+
+  Future<void> _vaciarChat() async {
+    final contacto = _contactoSeleccionado;
+    if (contacto == null) return;
+
+    bool? confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF222233),
+        title: const Text('Vaciar chat', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          '¿Estás seguro de que deseas eliminar todos los mensajes de esta conversación?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child:
+                const Text('Vaciar', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar != true) return;
+
+    try {
+      final res = await http
+          .delete(
+            Uri.parse('$kBaseUrl/api/chat/clear'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'rut': widget.miRut,
+              'peer': _contactoRut(contacto),
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode != 200 || data['success'] != true) {
+        throw Exception(data['error'] ?? res.body);
+      }
+      await _cargarMensajes(silencioso: true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo vaciar el chat: $e')),
       );
     }
   }
@@ -241,16 +320,20 @@ class _MensajesModalState extends State<MensajesModal> {
         child: Wrap(
           children: [
             ListTile(
-              leading: const Icon(Icons.camera_alt_rounded, color: Colors.white),
-              title: const Text('Tomar Foto', style: TextStyle(color: Colors.white)),
+              leading:
+                  const Icon(Icons.camera_alt_rounded, color: Colors.white),
+              title: const Text('Tomar Foto',
+                  style: TextStyle(color: Colors.white)),
               onTap: () {
                 Navigator.pop(context);
                 _seleccionarYSubir(ImageSource.camera);
               },
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library_rounded, color: Colors.white),
-              title: const Text('Elegir de Galería', style: TextStyle(color: Colors.white)),
+              leading:
+                  const Icon(Icons.photo_library_rounded, color: Colors.white),
+              title: const Text('Elegir de Galería',
+                  style: TextStyle(color: Colors.white)),
               onTap: () {
                 Navigator.pop(context);
                 _seleccionarYSubir(ImageSource.gallery);
@@ -264,12 +347,13 @@ class _MensajesModalState extends State<MensajesModal> {
 
   Future<void> _seleccionarYSubir(ImageSource source) async {
     try {
-      final XFile? pickedFile = await ImagePicker().pickImage(source: source, imageQuality: 70);
+      final XFile? pickedFile =
+          await ImagePicker().pickImage(source: source, imageQuality: 70);
       if (pickedFile == null) {
         print('No se seleccionó ninguna imagen.');
         return;
       }
-      
+
       final contacto = _contactoSeleccionado;
       if (contacto == null) return;
 
@@ -278,17 +362,20 @@ class _MensajesModalState extends State<MensajesModal> {
       });
 
       print('Preparando subida de imagen: ${pickedFile.path}');
-      var request = http.MultipartRequest('POST', Uri.parse('$kBaseUrl/api/chat/upload'));
+      var request =
+          http.MultipartRequest('POST', Uri.parse('$kBaseUrl/api/chat/upload'));
       request.fields['rut_emisor'] = widget.miRut;
       request.fields['rut_receptor'] = _contactoRut(contacto);
-      request.files.add(await http.MultipartFile.fromPath('file', pickedFile.path));
+      request.files
+          .add(await http.MultipartFile.fromPath('file', pickedFile.path));
 
       print('Enviando a $kBaseUrl/api/chat/upload ...');
-      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
+      final streamedResponse =
+          await request.send().timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamedResponse);
       print('Status Code de Subida: ${response.statusCode}');
       print('Respuesta del servidor: ${response.body}');
-      
+
       final data = jsonDecode(response.body) as Map<String, dynamic>;
 
       if (response.statusCode != 200 || data['success'] != true) {
@@ -335,7 +422,9 @@ class _MensajesModalState extends State<MensajesModal> {
     return Row(
       children: [
         IconButton(
-          icon: Icon(contacto == null ? Icons.close_rounded : Icons.arrow_back_rounded, color: Colors.white),
+          icon: Icon(
+              contacto == null ? Icons.close_rounded : Icons.arrow_back_rounded,
+              color: Colors.white),
           onPressed: () {
             if (contacto == null) {
               Navigator.pop(context);
@@ -353,10 +442,15 @@ class _MensajesModalState extends State<MensajesModal> {
                 contacto == null ? 'Mensajes' : _contactoTitulo(contacto),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600),
               ),
               Text(
-                contacto == null ? 'Cuenta compartida: $_unidadPropia + pantalla puerta' : 'Chat por Depto/Casa',
+                contacto == null
+                    ? 'Cuenta compartida: $_unidadPropia + pantalla puerta'
+                    : 'Chat por Depto/Casa',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: Colors.white54, fontSize: 12),
@@ -364,20 +458,43 @@ class _MensajesModalState extends State<MensajesModal> {
             ],
           ),
         ),
-        IconButton(
-          icon: const Icon(Icons.refresh_rounded, color: Color(0xFF448AFF)),
-          onPressed: contacto == null ? _cargarContactos : _cargarMensajes,
-        ),
+        if (contacto == null)
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF448AFF)),
+            onPressed: _cargarContactos,
+          )
+        else
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+            color: const Color(0xFF222233),
+            onSelected: (value) {
+              if (value == 'vaciar') {
+                _vaciarChat();
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'vaciar',
+                child: Text('Vaciar conversación',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
       ],
     );
   }
 
   Widget _buildContactos() {
     if (_loadingContactos) {
-      return const Expanded(child: Center(child: CircularProgressIndicator(color: Color(0xFF448AFF))));
+      return const Expanded(
+          child: Center(
+              child: CircularProgressIndicator(color: Color(0xFF448AFF))));
     }
     if (_contactos.isEmpty) {
-      return const Expanded(child: Center(child: Text('No hay contactos disponibles.', style: TextStyle(color: Colors.grey))));
+      return const Expanded(
+          child: Center(
+              child: Text('No hay contactos disponibles.',
+                  style: TextStyle(color: Colors.grey))));
     }
 
     return Expanded(
@@ -392,21 +509,33 @@ class _MensajesModalState extends State<MensajesModal> {
             margin: const EdgeInsets.only(bottom: 10),
             child: ListTile(
               leading: CircleAvatar(
-                backgroundColor: esAdmin ? const Color(0xFF448AFF) : const Color(0xFF4CAF50),
-                child: Icon(esAdmin ? Icons.support_agent_rounded : Icons.home_rounded, color: Colors.white),
+                backgroundColor:
+                    esAdmin ? const Color(0xFF448AFF) : const Color(0xFF4CAF50),
+                child: Icon(
+                    esAdmin ? Icons.support_agent_rounded : Icons.home_rounded,
+                    color: Colors.white),
               ),
-              title: Text(_contactoTitulo(c), style: const TextStyle(color: Colors.white)),
-              subtitle: Text(_contactoUltimoMensaje(c), maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: unread > 0 ? Colors.white70 : Colors.white54,
-                  fontWeight: unread > 0 ? FontWeight.w600 : FontWeight.normal,),
+              title: Text(_contactoTitulo(c),
+                  style: const TextStyle(color: Colors.white)),
+              subtitle: Text(
+                _contactoUltimoMensaje(c),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: unread > 0 ? Colors.white70 : Colors.white54,
+                  fontWeight: unread > 0 ? FontWeight.w600 : FontWeight.normal,
+                ),
               ),
               trailing: unread > 0
                   ? CircleAvatar(
                       radius: 13,
                       backgroundColor: const Color(0xFFFF5252),
-                      child: Text('$unread', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                      child: Text('$unread',
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 12)),
                     )
-                  : const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+                  : const Icon(Icons.chevron_right_rounded,
+                      color: Colors.white38),
               onTap: () => _seleccionarContacto(c),
             ),
           );
@@ -424,82 +553,123 @@ class _MensajesModalState extends State<MensajesModal> {
         children: [
           Expanded(
             child: _loadingMensajes
-                ? const Center(child: CircularProgressIndicator(color: Color(0xFF448AFF)))
+                ? const Center(
+                    child: CircularProgressIndicator(color: Color(0xFF448AFF)))
                 : ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     itemCount: _mensajes.length,
                     itemBuilder: (context, index) {
                       final m = _mensajes[index];
-                      final propio = (m['rut_emisor'] ?? '').toString() == widget.miRut;
-                      return Align(
-                        alignment: propio ? Alignment.centerRight : Alignment.centerLeft,
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(vertical: 4),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
-                          decoration: BoxDecoration(
-                            color: propio ? const Color(0xFF448AFF) : const Color(0xFF333344),
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment:
-                            propio ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                            children: [
-                              if (m['es_imagen'] == true)
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.network(
-                                    '$kBaseUrl${m['mensaje']}',
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) =>
-                                    const Icon(
-                                      Icons.broken_image,
-                                      color: Colors.white54,
-                                    ),
-                                  ),
-                                )
-                              else
-                                Text(
-                                  (m['mensaje'] ?? '').toString(),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                  ),
-                                ),
+                      final propio =
+                          (m['rut_emisor'] ?? '').toString() == widget.miRut;
+                      final mensajeId = m['id'];
+                      final leido = m['leido'] == true || m['leido'] == 1;
 
-                              // El estado solamente se muestra en mensajes enviados por mí.
-                              if (propio) ...[
-                                const SizedBox(height: 4),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      m['leido'] == true || m['leido'] == 1
-                                          ? Icons.done_all_rounded
-                                          : Icons.done_rounded,
-                                      size: 16,
-                                      color: m['leido'] == true || m['leido'] == 1
-                                          ? const Color(0xFFB3E5FC)
-                                          : Colors.white60,
+                      return GestureDetector(
+                        onLongPress: () {
+                          showModalBottomSheet(
+                            context: context,
+                            backgroundColor: const Color(0xFF222233),
+                            builder: (ctx) => SafeArea(
+                              child: Wrap(
+                                children: [
+                                  ListTile(
+                                    leading: const Icon(
+                                      Icons.delete_rounded,
+                                      color: Colors.redAccent,
                                     ),
-                                    const SizedBox(width: 3),
-                                    Text(
-                                      m['leido'] == true || m['leido'] == 1
-                                          ? 'Leído'
-                                          : 'No leído',
-                                      style: TextStyle(
-                                        color: m['leido'] == true || m['leido'] == 1
-                                            ? const Color(0xFFB3E5FC)
-                                            : Colors.white60,
-                                        fontSize: 10,
+                                    title: const Text(
+                                      'Eliminar mensaje',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                    onTap: () {
+                                      Navigator.pop(ctx);
+                                      if (mensajeId != null) {
+                                        _eliminarMensaje(mensajeId);
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                        child: Align(
+                          alignment: propio
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 9),
+                            constraints: BoxConstraints(
+                              maxWidth:
+                                  MediaQuery.of(context).size.width * 0.72,
+                            ),
+                            decoration: BoxDecoration(
+                              color: propio
+                                  ? const Color(0xFF448AFF)
+                                  : const Color(0xFF333344),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: propio
+                                  ? CrossAxisAlignment.end
+                                  : CrossAxisAlignment.start,
+                              children: [
+                                if (m['es_imagen'] == true)
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Image.network(
+                                      '$kBaseUrl${m['mensaje']}',
+                                      fit: BoxFit.cover,
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              const Icon(
+                                        Icons.broken_image,
+                                        color: Colors.white54,
                                       ),
                                     ),
-                                  ],
-                                ),
+                                  )
+                                else
+                                  Text(
+                                    (m['mensaje'] ?? '').toString(),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                if (propio) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        leido
+                                            ? Icons.done_all_rounded
+                                            : Icons.done_rounded,
+                                        size: 16,
+                                        color: leido
+                                            ? const Color(0xFFB3E5FC)
+                                            : Colors.white60,
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        leido ? 'Leído' : 'No leído',
+                                        style: TextStyle(
+                                          color: leido
+                                              ? const Color(0xFFB3E5FC)
+                                              : Colors.white60,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
                         ),
                       );
@@ -509,7 +679,8 @@ class _MensajesModalState extends State<MensajesModal> {
           Row(
             children: [
               IconButton(
-                icon: const Icon(Icons.attach_file_rounded, color: Colors.white54),
+                icon: const Icon(Icons.attach_file_rounded,
+                    color: Colors.white54),
                 onPressed: _mostrarOpcionesImagen,
               ),
               Expanded(
@@ -523,7 +694,9 @@ class _MensajesModalState extends State<MensajesModal> {
                     hintStyle: const TextStyle(color: Colors.white38),
                     filled: true,
                     fillColor: const Color(0xFF222233),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: BorderSide.none),
                   ),
                   onSubmitted: (_) => _enviarMensaje(),
                 ),
@@ -558,7 +731,12 @@ class _MensajesModalState extends State<MensajesModal> {
       ),
       child: Column(
         children: [
-          Container(width: 42, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(8))),
+          Container(
+              width: 42,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(8))),
           const SizedBox(height: 8),
           _buildHeader(),
           if (_error != null) ...[
