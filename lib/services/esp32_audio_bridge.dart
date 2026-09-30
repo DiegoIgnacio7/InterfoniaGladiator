@@ -22,7 +22,7 @@ String _wsBaseUrl() {
 
 class Esp32AudioBridge {
   // REVERSIÓN A 8 kHz
-  static const int sampleRate = 16000;
+  static const int sampleRate = 8000;
   static const int micCaptureSampleRate = 48000; // Mejor captura base para Android/iOS
   static const int fallbackPlaybackSampleRate = 48000;
   static const int channels = 1;
@@ -75,8 +75,7 @@ class Esp32AudioBridge {
   FlutterSoundPlayer _player = FlutterSoundPlayer();
   FlutterSoundRecorder _recorder = FlutterSoundRecorder();
 
-  WebSocket? _rxSocket;
-  WebSocket? _txSocket;
+  WebSocket? _audioSocket; // Socket unificado bidireccional (/audio_browser)
   StreamController<Uint8List>? _micStreamController;
   StreamSubscription<Uint8List>? _micSubscription;
   Timer? _txTimer;
@@ -193,15 +192,13 @@ class Esp32AudioBridge {
     await _openAudio();
   }
 
-Future<void> _openSockets() async {
+  Future<void> _openSockets() async {
     final base = _wsBaseUrl();
 
-    // Apertura secuencial para evitar condiciones de carrera en el servidor
-    _rxSocket = await WebSocket.connect('$base/browser_rx');
-    await Future.delayed(const Duration(milliseconds: 100));
-    _txSocket = await WebSocket.connect('$base/browser_tx');
+    // Conexión unificada al WebSocket bidireccional de audio en el navegador/app
+    _audioSocket = await WebSocket.connect('$base/audio_browser');
 
-    _rxSocket!.listen(
+    _audioSocket!.listen(
       (data) {
         if (!_started) return;
         if (data is List<int>) {
@@ -214,8 +211,8 @@ Future<void> _openSockets() async {
           _feedPlayer(bytes);
         }
       },
-      onError: (e) => debugPrint('[CITOFONO_AUDIO] browser_rx error: $e'),
-      onDone: () => debugPrint('[CITOFONO_AUDIO] browser_rx cerrado'),
+      onError: (e) => debugPrint('[CITOFONO_AUDIO] audio_browser error: $e'),
+      onDone: () => debugPrint('[CITOFONO_AUDIO] audio_browser cerrado'),
       cancelOnError: true,
     );
   }
@@ -543,14 +540,14 @@ Future<void> _openSockets() async {
   }
 
   void _flushOneTxFrame() {
-    final ws = _txSocket;
+    final ws = _audioSocket;
     if (!_started || ws == null || ws.readyState != WebSocket.open) return;
     if (!_recorderStarted || _recorderFailed) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_txWindowStartMs == 0 || now - _txWindowStartMs >= 1000) {
       debugPrint(
-        'ESP32 browser_tx rate: ${_txWindowBytes} B/s, '
+        'ESP32 audio_browser rate: ${_txWindowBytes} B/s, '
         'dropped/window: $_txWindowDropped, queue: ${_txQueue.length}, '
         'mic resample: $resampledMicInputBytes->$resampledMicOutputBytes B, '
         'warmup: $warmupDroppedTxBytes B',
@@ -579,7 +576,7 @@ Future<void> _openSockets() async {
       txBytes += frame.length;
       _txWindowBytes += frame.length;
     } catch (e) {
-      debugPrint('[CITOFONO_AUDIO] browser_tx send error: $e');
+      debugPrint('[CITOFONO_AUDIO] audio_browser send error: $e');
     }
   }
 
@@ -649,18 +646,11 @@ Future<void> _openSockets() async {
     _txQueue.clear();
     _micDownsampleCarry = Uint8List(0);
 
-    if (_rxSocket != null) {
+    if (_audioSocket != null) {
       try {
-        await _rxSocket!.close();
+        await _audioSocket!.close();
       } catch (_) {}
-      _rxSocket = null;
-    }
-
-    if (_txSocket != null) {
-      try {
-        await _txSocket!.close();
-      } catch (_) {}
-      _txSocket = null;
+      _audioSocket = null;
     }
 
     await _releaseAudioRoute();
