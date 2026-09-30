@@ -21,16 +21,16 @@ String _wsBaseUrl() {
 }
 
 class Esp32AudioBridge {
-  // REVERSIÓN A 8 kHz
+  // REVERSIÓN A 8 kHz[cite: 18]
   static const int sampleRate = 8000;
-  static const int micCaptureSampleRate = 48000; // Mejor captura base para Android/iOS
+  static const int micCaptureSampleRate = 48000; // Mejor captura base para Android/iOS[cite: 18]
   static const int fallbackPlaybackSampleRate = 48000;
   static const int channels = 1;
   static const int bytesPerSample = 2;
   static const int frameMs = 20;
-  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; // 320 bytes @ 8 kHz
+  static const int txFrameBytes = sampleRate * bytesPerSample * frameMs ~/ 1000; // 320 bytes @ 8 kHz[cite: 18]
 
-  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // Factor 6
+  static const int micDownsampleFactor = micCaptureSampleRate ~/ sampleRate; // Factor 6[cite: 18]
 
   static const int maxQueuedBytes = txFrameBytes * 25;
   static const int micWarmupDiscardMs = 1000;
@@ -196,7 +196,9 @@ class Esp32AudioBridge {
   Future<void> _openSockets() async {
     final base = _wsBaseUrl();
 
+    // Conexión ordenada de ambos sockets para evitar bloqueos simultáneos
     _rxSocket = await WebSocket.connect('$base/browser_rx');
+    await Future.delayed(const Duration(milliseconds: 100));
     _txSocket = await WebSocket.connect('$base/browser_tx');
 
     _rxSocket!.listen(
@@ -423,7 +425,7 @@ class Esp32AudioBridge {
 
   Uint8List _upsamplePcm16Mono8kTo48k(Uint8List input) {
     final usable = input.length - (input.length % 2);
-    // 8 kHz -> 48 kHz = repetir cada muestra 6 veces.
+    // 8 kHz -> 48 kHz = repetir cada muestra 6 veces.[cite: 18]
     final output = Uint8List(usable * 6);
     int out = 0;
 
