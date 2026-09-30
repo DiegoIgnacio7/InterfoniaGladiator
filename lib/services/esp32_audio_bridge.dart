@@ -75,7 +75,8 @@ class Esp32AudioBridge {
   FlutterSoundPlayer _player = FlutterSoundPlayer();
   FlutterSoundRecorder _recorder = FlutterSoundRecorder();
 
-  WebSocket? _audioSocket; // Socket unificado bidireccional (/audio_browser)
+  WebSocket? _rxSocket;
+  WebSocket? _txSocket;
   StreamController<Uint8List>? _micStreamController;
   StreamSubscription<Uint8List>? _micSubscription;
   Timer? _txTimer;
@@ -195,10 +196,10 @@ class Esp32AudioBridge {
   Future<void> _openSockets() async {
     final base = _wsBaseUrl();
 
-    // Conexión unificada al WebSocket bidireccional de audio en el navegador/app
-    _audioSocket = await WebSocket.connect('$base/audio_browser');
+    _rxSocket = await WebSocket.connect('$base/browser_rx');
+    _txSocket = await WebSocket.connect('$base/browser_tx');
 
-    _audioSocket!.listen(
+    _rxSocket!.listen(
       (data) {
         if (!_started) return;
         if (data is List<int>) {
@@ -211,8 +212,8 @@ class Esp32AudioBridge {
           _feedPlayer(bytes);
         }
       },
-      onError: (e) => debugPrint('[CITOFONO_AUDIO] audio_browser error: $e'),
-      onDone: () => debugPrint('[CITOFONO_AUDIO] audio_browser cerrado'),
+      onError: (e) => debugPrint('[CITOFONO_AUDIO] browser_rx error: $e'),
+      onDone: () => debugPrint('[CITOFONO_AUDIO] browser_rx cerrado'),
       cancelOnError: true,
     );
   }
@@ -540,14 +541,14 @@ class Esp32AudioBridge {
   }
 
   void _flushOneTxFrame() {
-    final ws = _audioSocket;
+    final ws = _txSocket;
     if (!_started || ws == null || ws.readyState != WebSocket.open) return;
     if (!_recorderStarted || _recorderFailed) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_txWindowStartMs == 0 || now - _txWindowStartMs >= 1000) {
       debugPrint(
-        'ESP32 audio_browser rate: ${_txWindowBytes} B/s, '
+        'ESP32 browser_tx rate: ${_txWindowBytes} B/s, '
         'dropped/window: $_txWindowDropped, queue: ${_txQueue.length}, '
         'mic resample: $resampledMicInputBytes->$resampledMicOutputBytes B, '
         'warmup: $warmupDroppedTxBytes B',
@@ -576,7 +577,7 @@ class Esp32AudioBridge {
       txBytes += frame.length;
       _txWindowBytes += frame.length;
     } catch (e) {
-      debugPrint('[CITOFONO_AUDIO] audio_browser send error: $e');
+      debugPrint('[CITOFONO_AUDIO] browser_tx send error: $e');
     }
   }
 
@@ -646,11 +647,18 @@ class Esp32AudioBridge {
     _txQueue.clear();
     _micDownsampleCarry = Uint8List(0);
 
-    if (_audioSocket != null) {
+    if (_rxSocket != null) {
       try {
-        await _audioSocket!.close();
+        await _rxSocket!.close();
       } catch (_) {}
-      _audioSocket = null;
+      _rxSocket = null;
+    }
+
+    if (_txSocket != null) {
+      try {
+        await _txSocket!.close();
+      } catch (_) {}
+      _txSocket = null;
     }
 
     await _releaseAudioRoute();
