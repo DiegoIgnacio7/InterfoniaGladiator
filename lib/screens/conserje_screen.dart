@@ -1,3 +1,4 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -43,6 +44,49 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
   void _tocarTono() => _ringtonePlayer.playRingtone();
   void _detenerTono() => _ringtonePlayer.stop();
 
+  // NUEVO: Función para solicitar permisos y registrar el Token FCM
+
+  Future<void> _registrarTokenFCM(String rut) async {
+    try {
+      // 1. Pedir permisos a iOS/Android (Obligatorio en iPhone)
+      NotificationSettings settings = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+
+      // 2. Si el usuario acepta, obtenemos el token
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        String? token = await FirebaseMessaging.instance.getToken();
+        
+        if (token != null) {
+          await http.post(
+            Uri.parse('$kBaseUrl/registrar-token'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'rut': rut, 'token': token}),
+          );
+          debugPrint('✅ Token FCM enviado al servidor');
+        }
+      } else {
+        debugPrint('❌ Permisos de notificación denegados por el usuario');
+      }
+
+      // 3. Manejo de renovación de tokens
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+        await http.post(
+          Uri.parse('$kBaseUrl/registrar-token'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'rut': rut, 'token': newToken}),
+        );
+        debugPrint('🔄 Token FCM renovado y enviado al servidor');
+      });
+    } catch (e) {
+      debugPrint('❌ Error obteniendo token FCM: $e');
+    }
+  }
+  // =========================================================
+  // =========================================================
+
   @override
   void initState() {
     super.initState();
@@ -75,6 +119,11 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
       _mensajesSinLeerTotales = totalesGuardados;
       _mensajesSinLeerPorUsuario = mapCargado;
     });
+
+    // NUEVO: Ejecutar el registro del token si el RUT existe
+    if (miRut.isNotEmpty) {
+      _registrarTokenFCM(miRut);
+    }
 
     _conectarSocket();
     _abrirMensajesSiPendiente();
