@@ -54,6 +54,31 @@ class _MensajesModalState extends State<MensajesModal> {
   String _contactoRut(Map<String, dynamic> c) =>
       (c['rut_usuario'] ?? '').toString();
 
+  DateTime? _fechaEnvioLocal(dynamic fechaHora) {
+    final valor = (fechaHora ?? '').toString().trim();
+    if (valor.isEmpty) return null;
+
+    // El servidor guarda UTC y puede enviar la fecha sin indicador de zona.
+    final tieneZona =
+        RegExp(r'(Z|[+-]\d{2}:?\d{2})$', caseSensitive: false).hasMatch(valor);
+    final fecha = DateTime.tryParse(tieneZona ? valor : '${valor}Z');
+    return fecha?.toLocal();
+  }
+
+  String _diaEnvio(dynamic fechaHora) {
+    final fecha = _fechaEnvioLocal(fechaHora);
+    if (fecha == null) return 'Fecha no registrada';
+    return '${fecha.day.toString().padLeft(2, '0')}/'
+        '${fecha.month.toString().padLeft(2, '0')}/${fecha.year}';
+  }
+
+  String _horaEnvio(dynamic fechaHora) {
+    final local = _fechaEnvioLocal(fechaHora);
+    if (local == null) return '--:--';
+    return '${local.hour.toString().padLeft(2, '0')}:'
+        '${local.minute.toString().padLeft(2, '0')}';
+  }
+
   String _contactoTitulo(Map<String, dynamic> c) {
     final display = (c['display_name'] ?? '').toString().trim();
     if (display.isNotEmpty) return display;
@@ -566,7 +591,7 @@ class _MensajesModalState extends State<MensajesModal> {
                       final mensajeId = m['id'];
                       final leido = m['leido'] == true || m['leido'] == 1;
 
-                      return GestureDetector(
+                      final burbuja = GestureDetector(
                         onLongPress: () {
                           showModalBottomSheet(
                             context: context,
@@ -641,11 +666,19 @@ class _MensajesModalState extends State<MensajesModal> {
                                       fontSize: 15,
                                     ),
                                   ),
-                                if (propio) ...[
-                                  const SizedBox(height: 4),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _horaEnvio(m['fecha_hora']),
+                                      style: const TextStyle(
+                                        color: Colors.white60,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                    if (propio) ...[
+                                      const SizedBox(width: 3),
                                       Icon(
                                         leido
                                             ? Icons.done_all_rounded
@@ -654,24 +687,51 @@ class _MensajesModalState extends State<MensajesModal> {
                                         color: leido
                                             ? const Color(0xFFB3E5FC)
                                             : Colors.white60,
-                                      ),
-                                      const SizedBox(width: 3),
-                                      Text(
-                                        leido ? 'Leído' : 'No leído',
-                                        style: TextStyle(
-                                          color: leido
-                                              ? const Color(0xFFB3E5FC)
-                                              : Colors.white60,
-                                          fontSize: 10,
-                                        ),
+                                        semanticLabel:
+                                            leido ? 'Leído' : 'No leído',
                                       ),
                                     ],
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ],
                             ),
                           ),
                         ),
+                      );
+                      final dia = _diaEnvio(m['fecha_hora']);
+                      final mostrarDia = index == 0 ||
+                          _diaEnvio(_mensajes[index - 1]['fecha_hora']) != dia;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (mostrarDia)
+                            Padding(
+                              padding:
+                                  const EdgeInsets.only(top: 4, bottom: 12),
+                              child: Row(
+                                children: [
+                                  const Expanded(
+                                    child: Divider(color: Colors.white24),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12),
+                                    child: Text(
+                                      dia,
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  const Expanded(
+                                    child: Divider(color: Colors.white24),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          burbuja,
+                        ],
                       );
                     },
                   ),
