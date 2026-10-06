@@ -13,10 +13,10 @@ import '../helpers/citofono_call_utils.dart';
 import '../helpers/call_notifications.dart';
 import 'login_screen.dart';
 import '../widgets/directorio_modal.dart';
-import '../widgets/dialer_modal.dart';
 import '../widgets/historial_modal.dart';
 import '../widgets/mensajes_modal.dart';
 import '../widgets/recados_modal.dart';
+import '../widgets/puertas_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -469,21 +469,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
     } catch (_) {}
   }
 
-  void _abrirDialer() async {
-    await _cargarOcupados();
-    if (!mounted) return;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => DialerModal(
-        miRut: miRut,
-        rutosOcupados: rutosOcupados,
-        onLlamar: _llamar,
-      ),
-    );
-  }
-
   void _abrirConfigWifiEsp32() {
     showDialog(
       context: context,
@@ -556,6 +541,16 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
         rutosOcupados: rutosOcupados,
         onLlamar: _llamar,
       ),
+    );
+  }
+
+  void _abrirPuertas() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PuertasModal(miRut: miRut),
     );
   }
 
@@ -797,9 +792,9 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                           mainAxisSpacing: 14,
                           childAspectRatio: 1.2,
                           children: [
-                            // CARD 1: MARCAR DEPARTAMENTO
+                            // CARD 1: PUERTAS
                             InkWell(
-                              onTap: _abrirDialer,
+                              onTap: _abrirPuertas,
                               borderRadius: BorderRadius.circular(20),
                               child: Container(
                                 padding: const EdgeInsets.all(16),
@@ -828,14 +823,14 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                                         color: Colors.white.withOpacity(0.2),
                                         shape: BoxShape.circle,
                                       ),
-                                      child: const Icon(Icons.dialpad_rounded, color: Colors.white, size: 24),
+                                      child: const Icon(Icons.door_front_door_rounded, color: Colors.white, size: 24),
                                     ),
                                     const Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text('Marcar Depto', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                                        Text('Puertas', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                                         SizedBox(height: 2),
-                                        Text('Intercomunicador', style: TextStyle(fontSize: 11, color: Colors.white70)),
+                                        Text('Acceso a puertas', style: TextStyle(fontSize: 11, color: Colors.white70)),
                                       ],
                                     ),
                                   ],

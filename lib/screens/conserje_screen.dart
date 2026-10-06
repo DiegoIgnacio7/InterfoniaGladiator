@@ -14,7 +14,7 @@ import '../helpers/call_notifications.dart';
 import 'login_screen.dart';
 import '../widgets/directorio_modal.dart';
 import '../widgets/historial_modal.dart';
-import '../widgets/recados_modal.dart';
+import '../widgets/reportes_modal.dart';
 import '../widgets/mensajes_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
@@ -546,6 +546,15 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
     );
   }
 
+  void _abrirReportes() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ReportesModal(miRut: miRut),
+    );
+  }
+
   Future<void> _enviarAviso() async {
     if (_enviandoAviso) return;
     setState(() => _enviandoAviso = true);
@@ -585,15 +594,6 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(resultado)));
-  }
-
-  void _abrirRecados() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => RecadosModal(miRut: miRut),
-    );
   }
 
   void _cerrarSesion() async {
@@ -710,11 +710,11 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
             right: 0,
             child: Center(
               child: FloatingActionButton.extended(
-                heroTag: 'fab_recados',
+                heroTag: 'fab_reportes',
                 backgroundColor: const Color(0x9720CDFF),
-                onPressed: _abrirRecados,
+                onPressed: _abrirReportes,
                 icon: const Icon(Icons.sticky_note_2_rounded, color: Colors.white),
-                label: const Text('Recados', style: TextStyle(color: Colors.white)),
+                label: const Text('Reportes', style: TextStyle(color: Colors.white)),
               ),
             ),
           ),
