@@ -8,8 +8,13 @@ import '../config.dart';
 
 class MensajesModal extends StatefulWidget {
   final String miRut;
+  final bool soloConserjes;
 
-  const MensajesModal({super.key, required this.miRut});
+  const MensajesModal({
+    super.key,
+    required this.miRut,
+    this.soloConserjes = false,
+  });
 
   @override
   State<MensajesModal> createState() => _MensajesModalState();
@@ -140,6 +145,10 @@ class _MensajesModalState extends State<MensajesModal> {
 
       final contactos = (data['contactos'] as List? ?? [])
           .map((e) => Map<String, dynamic>.from(e as Map))
+          .where((contacto) =>
+              !widget.soloConserjes ||
+              contacto['es_admin'] == true ||
+              contacto['es_admin'] == 1)
           .toList();
 
       if (!mounted) return;

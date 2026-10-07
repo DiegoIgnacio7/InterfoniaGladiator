@@ -6,8 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config.dart';
 
 class PuertasModal extends StatefulWidget {
-  static const String abrirPuertaEndpoint = '$kBaseUrl/api/puertas/abrir';
-  static const String registrosEndpoint = '$kBaseUrl/api/puertas/registros';
+  static const String abrirPuertaEndpoint = '$kBaseUrl/api/puertas';
+  static const String registrosEndpoint = '$kBaseUrl/api/puertas';
   final String miRut;
   final http.Client? client;
 
@@ -61,8 +61,8 @@ class _PuertasModalState extends State<PuertasModal> {
         _cargandoSesion = false;
         _error = null;
       });
+      _timer?.cancel();
       if (_esAdmin == true) {
-        _timer?.cancel();
         _timer = Timer.periodic(
             const Duration(seconds: 10), (_) => _cargarRegistros());
         await _cargarRegistros();
@@ -134,11 +134,17 @@ class _PuertasModalState extends State<PuertasModal> {
           .post(
             Uri.parse(PuertasModal.abrirPuertaEndpoint),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'rut': widget.miRut, 'puerta': puerta}),
+            body: jsonEncode({
+              'rut': widget.miRut,
+              'puerta': puerta,
+              'titulo': 'Apertura de puerta ${puerta == 1 ? 'uno' : 'dos'}',
+              'descripcion':
+                  'Se abrió la puerta ${puerta == 1 ? 'uno' : 'dos'}.',
+            }),
           )
           .timeout(const Duration(seconds: 10));
       final data = _leerRespuesta(response);
-      if (data is! Map || data['success'] != true) {
+      if (data is! Map || data['success'] != true || data['registro'] is! Map) {
         throw Exception('No se pudo confirmar el registro de la puerta.');
       }
       mensaje =
@@ -179,7 +185,10 @@ class _PuertasModalState extends State<PuertasModal> {
   }
 
   String _fechaRegistro(dynamic valor) {
-    final fecha = DateTime.tryParse(valor?.toString() ?? '')?.toLocal();
+    final texto = valor?.toString().trim() ?? '';
+    final tieneZona =
+        RegExp(r'(Z|[+-]\d{2}:?\d{2})$', caseSensitive: false).hasMatch(texto);
+    final fecha = DateTime.tryParse(tieneZona ? texto : '${texto}Z')?.toLocal();
     if (fecha == null) return '';
     String dos(int numero) => numero.toString().padLeft(2, '0');
     return '${dos(fecha.day)}/${dos(fecha.month)}/${fecha.year} '
@@ -187,9 +196,11 @@ class _PuertasModalState extends State<PuertasModal> {
   }
 
   Widget _registro(Map<String, dynamic> registro) {
-    final fecha = _fechaRegistro(registro['fecha_hora']);
+    final fecha = _fechaRegistro(registro['fecha_creacion']);
     final dpto = registro['id_dpto']?.toString() ?? '';
-    final residente = registro['rut_residente']?.toString() ?? '';
+    final emisor = registro['rut_emisor']?.toString() ?? '';
+    final titulo = registro['titulo']?.toString() ?? 'Registro de puerta';
+    final descripcion = registro['descripcion']?.toString() ?? '';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Material(
@@ -198,15 +209,22 @@ class _PuertasModalState extends State<PuertasModal> {
         child: ListTile(
           leading: const Icon(Icons.door_front_door_rounded,
               color: Color(0xFF448AFF)),
-          title: Text(registro['mensaje']?.toString() ?? 'Registro de puerta',
-              style: const TextStyle(color: Colors.white)),
-          subtitle: Text(
-              [
-                if (dpto.isNotEmpty) 'Depto. $dpto',
-                if (residente.isNotEmpty) 'RUT: $residente',
-                if (fecha.isNotEmpty) fecha,
-              ].join('\n'),
-              style: const TextStyle(color: Colors.grey)),
+          title: Text(titulo, style: const TextStyle(color: Colors.white)),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (descripcion.isNotEmpty)
+                Text(descripcion, style: const TextStyle(color: Colors.grey)),
+              Text(
+                [
+                  if (dpto.isNotEmpty) 'Depto. $dpto',
+                  if (emisor.isNotEmpty) 'RUT: $emisor',
+                  if (fecha.isNotEmpty) fecha,
+                ].join('\n'),
+                style: const TextStyle(color: Colors.grey),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -13,7 +13,6 @@ import '../helpers/citofono_call_utils.dart';
 import '../helpers/call_notifications.dart';
 import 'login_screen.dart';
 import '../widgets/directorio_modal.dart';
-import '../widgets/historial_modal.dart';
 import '../widgets/mensajes_modal.dart';
 import '../widgets/recados_modal.dart';
 import '../widgets/puertas_modal.dart';
@@ -569,16 +568,10 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => MensajesModal(miRut: miRut),
-    );
-  }
-
-  void _abrirHistorial() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => HistorialModal(miRut: miRut),
+      builder: (_) => MensajesModal(
+        miRut: miRut,
+        soloConserjes: true,
+      ),
     );
   }
 
@@ -969,19 +962,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                         // QUICK NAV FOOTER BAR
                         Row(
                           children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(
-                                  side: BorderSide(color: Colors.white.withOpacity(0.12)),
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                ),
-                                onPressed: _abrirHistorial,
-                                icon: const Icon(Icons.history_rounded, color: Colors.white70),
-                                label: const Text('Historial', style: TextStyle(color: Colors.white70)),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
                             Expanded(
                               child: OutlinedButton.icon(
                                 style: OutlinedButton.styleFrom(
