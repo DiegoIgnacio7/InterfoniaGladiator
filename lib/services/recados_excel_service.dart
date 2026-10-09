@@ -62,9 +62,11 @@ class RecadosExcelService {
   }
 
   static Uint8List generar(List<Map<String, dynamic>> recados,
-      {List<Map<String, dynamic>> usuarios = const []}) {
+      {List<Map<String, dynamic>> usuarios = const [],
+      bool mostrarComoMensajes = false}) {
+    final nombreListado = mostrarComoMensajes ? 'mensajes' : 'recados';
     if (recados.isEmpty) {
-      throw ArgumentError('No hay recados para exportar.');
+      throw ArgumentError('No hay $nombreListado para exportar.');
     }
     final usuariosPorRut = <String, Map<String, dynamic>>{};
     for (final usuario in usuarios) {
@@ -72,8 +74,9 @@ class RecadosExcelService {
       if (rut.isNotEmpty) usuariosPorRut[rut] = usuario;
     }
     final libro = Excel.createExcel();
-    libro.rename('Sheet1', 'Recados');
-    final hoja = libro['Recados'];
+    final nombreHoja = mostrarComoMensajes ? 'Mensajes' : 'Recados';
+    libro.rename('Sheet1', nombreHoja);
+    final hoja = libro[nombreHoja];
     const columnas = [
       'Departamento',
       'RUT del emisor',
@@ -155,8 +158,13 @@ class RecadosExcelService {
 
   /// Devuelve false si el usuario cancela el selector de guardado.
   static Future<bool> exportar(List<Map<String, dynamic>> recados,
-      {required bool resueltos, http.Client? client}) async {
-    if (recados.isEmpty) throw ArgumentError('No hay recados para exportar.');
+      {required bool resueltos,
+      http.Client? client,
+      bool mostrarComoMensajes = false}) async {
+    final nombreListado = mostrarComoMensajes ? 'mensajes' : 'recados';
+    if (recados.isEmpty) {
+      throw ArgumentError('No hay $nombreListado para exportar.');
+    }
     final consulta = client ?? http.Client();
     final List<Map<String, dynamic>> usuarios;
     try {
@@ -164,12 +172,13 @@ class RecadosExcelService {
     } finally {
       if (client == null) consulta.close();
     }
-    final bytes = generar(recados, usuarios: usuarios);
+    final bytes = generar(recados,
+        usuarios: usuarios, mostrarComoMensajes: mostrarComoMensajes);
     final fecha = DateTime.now().toIso8601String().replaceAll(':', '-');
     final nombre =
-        'recados_${resueltos ? 'resueltos' : 'pendientes'}_$fecha.xlsx';
+        '${nombreListado}_${resueltos ? 'resueltos' : 'pendientes'}_$fecha.xlsx';
     final destino = await FilePicker.platform.saveFile(
-      dialogTitle: 'Guardar recados en Excel',
+      dialogTitle: 'Guardar $nombreListado en Excel',
       fileName: nombre,
       type: FileType.custom,
       allowedExtensions: ['xlsx'],

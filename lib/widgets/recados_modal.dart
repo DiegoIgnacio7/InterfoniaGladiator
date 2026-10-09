@@ -9,7 +9,13 @@ import '../services/recados_excel_service.dart';
 class RecadosModal extends StatefulWidget {
   final String miRut;
   final http.Client? client;
-  const RecadosModal({super.key, required this.miRut, this.client});
+  final bool mostrarComoMensajes;
+  const RecadosModal({
+    super.key,
+    required this.miRut,
+    this.client,
+    this.mostrarComoMensajes = false,
+  });
 
   @override
   State<RecadosModal> createState() => _RecadosModalState();
@@ -27,6 +33,13 @@ class _RecadosModalState extends State<RecadosModal> {
   String? _error;
   final _busquedaPendientes = TextEditingController();
   final _busquedaResueltos = TextEditingController();
+
+  String get _nombrePlural =>
+      widget.mostrarComoMensajes ? 'mensajes' : 'recados';
+  String get _nombreSingular =>
+      widget.mostrarComoMensajes ? 'mensaje' : 'recado';
+  String get _tituloModal =>
+      widget.mostrarComoMensajes ? 'Mensajes' : 'Recados';
 
   @override
   void initState() {
@@ -89,14 +102,14 @@ class _RecadosModalState extends State<RecadosModal> {
             .timeout(timeout);
         break;
       default:
-        throw Exception('Operación de recados no válida.');
+        throw Exception('Operación de $_nombrePlural no válida.');
     }
     final dynamic body;
     try {
       body = jsonDecode(utf8.decode(response.bodyBytes));
     } catch (_) {
       throw Exception(
-          'El servidor no devolvió una respuesta válida de Recados.');
+          'El servidor no devolvió una respuesta válida de $_tituloModal.');
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(body is Map
@@ -106,12 +119,12 @@ class _RecadosModalState extends State<RecadosModal> {
     if (metodo == 'GET') {
       if (body is! List || body.any((r) => r is! Map)) {
         throw Exception(
-            'El servidor no devolvió una respuesta válida de Recados.');
+            'El servidor no devolvió una respuesta válida de $_tituloModal.');
       }
     } else if (body is! Map || body['success'] != true) {
       throw Exception(body is Map
           ? body['error'] ?? 'No se pudo completar la operación.'
-          : 'El servidor no devolvió una respuesta válida de Recados.');
+          : 'El servidor no devolvió una respuesta válida de $_tituloModal.');
     }
     return body;
   }
@@ -191,7 +204,7 @@ class _RecadosModalState extends State<RecadosModal> {
         final confirmar = await showDialog<bool>(
             context: context,
             builder: (ctx) => AlertDialog(
-                  title: const Text('Cancelar recado'),
+                  title: Text('Cancelar $_nombreSingular'),
                   content: Text(
                       '¿Cancelar "${recado['titulo']}"? Esta acción no se puede deshacer.'),
                   actions: [
@@ -269,11 +282,14 @@ class _RecadosModalState extends State<RecadosModal> {
       _exportando = true;
     });
     try {
-      final guardado =
-          await RecadosExcelService.exportar(recados, resueltos: resueltos);
+      final guardado = await RecadosExcelService.exportar(
+        recados,
+        resueltos: resueltos,
+        mostrarComoMensajes: widget.mostrarComoMensajes,
+      );
       if (guardado && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Excel guardado con ${recados.length} recados.'),
+          content: Text('Excel guardado con ${recados.length} $_nombrePlural.'),
         ));
       }
     } catch (_) {
@@ -374,10 +390,10 @@ class _RecadosModalState extends State<RecadosModal> {
       return Center(
           child: Text(
               _error != null
-                  ? 'No se pudieron consultar los recados.'
+                  ? 'No se pudieron consultar los $_nombrePlural.'
                   : consulta.isNotEmpty
-                      ? 'No hay recados ${resueltos ? 'resueltos' : 'pendientes'} para ese departamento.'
-                      : 'No hay recados ${resueltos ? 'resueltos' : 'pendientes'}.',
+                      ? 'No hay $_nombrePlural ${resueltos ? 'resueltos' : 'pendientes'} para ese departamento.'
+                      : 'No hay $_nombrePlural ${resueltos ? 'resueltos' : 'pendientes'}.',
               style: const TextStyle(color: Colors.white54)));
     }
     return ListView.separated(
@@ -470,7 +486,7 @@ class _RecadosModalState extends State<RecadosModal> {
                               : Icons.delete_outline),
                           label: Text(_esAdmin == true
                               ? 'Marcar como resuelto'
-                              : 'Cancelar recado'),
+                              : 'Cancelar $_nombreSingular'),
                         )),
                   ],
                 ],
@@ -506,7 +522,9 @@ class _RecadosModalState extends State<RecadosModal> {
                   Row(children: [
                     Expanded(
                         child: Text(
-                            _esAdmin == false ? 'Mis recados' : 'Recados',
+                            _esAdmin == false
+                                ? 'Mis $_nombrePlural'
+                                : _tituloModal,
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 20,

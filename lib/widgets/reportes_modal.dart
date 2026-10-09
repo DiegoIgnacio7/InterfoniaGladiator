@@ -97,11 +97,11 @@ class ReportesModal extends StatelessWidget {
                 ),
               ),
               _botonReporte(
-                titulo: 'Reportes de Recados',
+                titulo: 'Reportes de Mensajes',
                 icono: Icons.sticky_note_2_rounded,
                 onTap: () => _abrirReporte(
                   context,
-                  (_) => RecadosModal(miRut: miRut),
+                  (_) => RecadosModal(miRut: miRut, mostrarComoMensajes: true),
                 ),
               ),
               _botonReporte(
