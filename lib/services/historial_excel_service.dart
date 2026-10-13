@@ -123,10 +123,77 @@ class HistorialExcelService {
     );
   }
 
+  /// Convierte la fecha UTC del servidor a la zona horaria del dispositivo.
+  static DateTime? fechaLocal(dynamic valor, {DateTime? ahoraUtc}) {
+    final texto = _texto(valor);
+    final corta =
+        RegExp(r'^(\d{2})/(\d{2})\s+(\d{2}):(\d{2})$').firstMatch(texto);
+    if (corta != null) {
+      final dia = int.parse(corta[1]!);
+      final mes = int.parse(corta[2]!);
+      final hora = int.parse(corta[3]!);
+      final minuto = int.parse(corta[4]!);
+      if (mes < 1 ||
+          mes > 12 ||
+          dia < 1 ||
+          dia > 31 ||
+          hora > 23 ||
+          minuto > 59) {
+        return null;
+      }
+      // /historial omite el año. Su retención de 30 días permite inferir
+      // la fecha reciente, también al consultar diciembre desde enero.
+      final ahora = (ahoraUtc ?? DateTime.now()).toUtc();
+      final limite = ahora.add(const Duration(minutes: 5));
+      for (final anio in [ahora.year + 1, ahora.year, ahora.year - 1]) {
+        final utc = DateTime.utc(anio, mes, dia, hora, minuto);
+        // DateTime normaliza fechas imposibles; no deben convertirse.
+        if (utc.month == mes && utc.day == dia && !utc.isAfter(limite)) {
+          return utc.toLocal();
+        }
+      }
+      return null;
+    }
+
+    // También admite una fecha ISO completa si el servidor la entrega.
+    if (!RegExp(r'^\d{4}-\d{2}-\d{2}(?:[Tt ]\d{2}:\d{2}.*)?$')
+        .hasMatch(texto)) {
+      return null;
+    }
+    final tieneHora = RegExp(r'[Tt ]\d{2}:\d{2}').hasMatch(texto);
+    final tieneZona =
+        tieneHora && RegExp(r'(?:[zZ]|[+-]\d{2}(?::?\d{2})?)$').hasMatch(texto);
+    final utc = DateTime.tryParse(
+        tieneHora ? (tieneZona ? texto : '${texto}Z') : '${texto}T00:00:00Z');
+    return utc?.toLocal();
+  }
+
+  /// Conserva el formato del historial sin mostrar el año inferido.
+  static String formatearFechaLocal(dynamic valor, {DateTime? ahoraUtc}) {
+    final local = fechaLocal(valor, ahoraUtc: ahoraUtc);
+    if (local == null) return _texto(valor);
+    String dos(int numero) => numero.toString().padLeft(2, '0');
+    return '${dos(local.day)}/${dos(local.month)} '
+        '${dos(local.hour)}:${dos(local.minute)}';
+  }
+
   static int? _duracionSegundos(dynamic valor) {
     final segundos =
         valor is int ? valor : int.tryParse(valor?.toString().trim() ?? '');
     return segundos != null && segundos >= 0 ? segundos : null;
+  }
+
+  /// Muestra solo segundos, minutos y segundos, u horas, minutos y segundos.
+  static String formatearDuracion(dynamic valor) {
+    final total = _duracionSegundos(valor);
+    if (total == null) return _noDisponible;
+    if (total < 60) return '$total s';
+
+    final horas = total ~/ 3600;
+    final minutos = (total % 3600) ~/ 60;
+    final segundos = total % 60;
+    if (horas == 0) return '$minutos min $segundos s';
+    return '$horas h $minutos min $segundos s';
   }
 
   /// [usuarios] debe incluir el directorio completo para resolver nombres únicos.
@@ -179,7 +246,7 @@ class HistorialExcelService {
       'Fecha',
       'Tipo de llamada',
       'Estado',
-      'Duración (segundos)',
+      'Duración',
     ];
     const anchos = [18.0, 18.0, 36.0, 36.0, 24.0, 26.0, 18.0, 24.0];
     hoja.appendRow(columnas.map((columna) => TextCellValue(columna)).toList());
@@ -246,18 +313,18 @@ class HistorialExcelService {
           : '${estadoNormalizado[0].toUpperCase()}${estadoNormalizado.substring(1)}';
       final duracion = _duracionSegundos(llamada['duracion_segundos']);
 
-      // /historial entrega la fecha como dd/MM HH:mm, sin año ni zona.
-      // Se conserva ese texto para no inventar una fecha completa.
-      // TextCellValue también conserva identificadores y evita fórmulas.
+      final fecha = formatearFechaLocal(llamada['fecha']);
+      // Modal y Excel utilizan la misma conversión a hora local.
+      // TextCellValue conserva el formato dd/MM HH:mm y evita fórmulas.
       hoja.appendRow([
         textoOpcional('id'),
         TextCellValue(departamento.isEmpty ? _noDisponible : departamento),
         TextCellValue(nombre.isEmpty ? 'Usuario desconocido' : nombre),
         TextCellValue(receptor.isEmpty ? _noDisponible : receptor),
-        textoOpcional('fecha'),
+        fecha.isEmpty ? null : TextCellValue(fecha),
         textoOpcional('tipo'),
         TextCellValue(etiquetaEstado),
-        duracion == null ? null : IntCellValue(duracion),
+        duracion == null ? null : TextCellValue(formatearDuracion(duracion)),
       ]);
 
       final color = switch (estadoNormalizado) {

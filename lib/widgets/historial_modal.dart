@@ -214,10 +214,14 @@ class _HistorialModalState extends State<HistorialModal> {
                               nombresPorRut: _nombresPorRut,
                             );
                             final tipo = (l['tipo'] ?? 'Llamada').toString();
-                            final fecha = (l['fecha'] ?? '').toString();
+                            final fecha =
+                                HistorialExcelService.formatearFechaLocal(
+                                    l['fecha']);
                             final estado =
                                 (l['estado'] ?? 'Finalizada').toString();
-                            final duracion = l['duracion_segundos'] ?? 0;
+                            final duracion =
+                                HistorialExcelService.formatearDuracion(
+                                    l['duracion_segundos'] ?? 0);
 
                             return Container(
                               margin: const EdgeInsets.only(bottom: 10),
@@ -285,7 +289,7 @@ class _HistorialModalState extends State<HistorialModal> {
                                           ),
                                         ),
                                         Text(
-                                          'Estado: $estado · Duración: ${duracion}s',
+                                          'Estado: $estado · Duración: $duracion',
                                           style: const TextStyle(
                                             color: Colors.grey,
                                             fontSize: 12,
