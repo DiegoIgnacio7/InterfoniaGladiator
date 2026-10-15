@@ -13,11 +13,12 @@ import '../helpers/citofono_call_utils.dart';
 import '../helpers/call_notifications.dart';
 import 'login_screen.dart';
 import '../widgets/directorio_modal.dart';
-import '../widgets/historial_modal.dart';
 import '../widgets/reportes_modal.dart';
 import '../widgets/mensajes_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
+
+enum _OpcionMenuConserje { directorio, mensajes }
 
 class ConserjeScreen extends StatefulWidget {
   const ConserjeScreen({super.key});
@@ -503,6 +504,71 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
     } catch (_) {}
   }
 
+  Future<void> _abrirMenu() async {
+    final opcion = await showModalBottomSheet<_OpcionMenuConserje>(
+      context: context,
+      backgroundColor: const Color(0xFF222233),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (menuContext) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(
+                  Icons.contacts_rounded,
+                  color: Color(0xFF448AFF),
+                ),
+                title: const Text(
+                  'Directorio de contactos',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () => Navigator.pop(
+                  menuContext,
+                  _OpcionMenuConserje.directorio,
+                ),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.chat_bubble_rounded,
+                  color: Color(0xFF4CAF50),
+                ),
+                title: const Text(
+                  'Mensajes',
+                  style: TextStyle(color: Colors.white),
+                ),
+                trailing: _mensajesSinLeerTotales > 0
+                    ? Badge(
+                        label: Text('$_mensajesSinLeerTotales'),
+                        backgroundColor: Colors.red,
+                      )
+                    : null,
+                onTap: () => Navigator.pop(
+                  menuContext,
+                  _OpcionMenuConserje.mensajes,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted || opcion == null) return;
+    switch (opcion) {
+      case _OpcionMenuConserje.directorio:
+        _abrirDirectorio();
+        break;
+      case _OpcionMenuConserje.mensajes:
+        _abrirMensajes();
+        break;
+    }
+  }
+
   void _abrirDirectorio() async {
     await _cargarOcupados();
     if (!mounted) return;
@@ -534,15 +600,6 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => MensajesModal(miRut: miRut),
-    );
-  }
-
-  void _abrirHistorial() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => HistorialModal(miRut: miRut),
     );
   }
 
@@ -684,28 +741,15 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
             bottom: 30,
             left: 30,
             child: FloatingActionButton(
-              heroTag: 'fab_historial',
-              backgroundColor: const Color(0xFF333344),
-              onPressed: _abrirHistorial,
-              child: const Icon(Icons.history_rounded, color: Colors.white),
+              heroTag: 'fab_aviso',
+              tooltip: _enviandoAviso ? 'Enviando...' : 'Aviso',
+              backgroundColor: const Color(0xFFEF6C00),
+              onPressed: _enviandoAviso ? null : _enviarAviso,
+              child: const Icon(Icons.notifications_active_rounded, color: Colors.white),
             ),
           ),
           Positioned(
-            bottom: 174,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: FloatingActionButton.extended(
-                heroTag: 'fab_aviso',
-                backgroundColor: const Color(0xFFEF6C00),
-                onPressed: _enviandoAviso ? null : _enviarAviso,
-                icon: const Icon(Icons.notifications_active_rounded, color: Colors.white),
-                label: Text(_enviandoAviso ? 'Enviando...' : 'Aviso', style: const TextStyle(color: Colors.white)),
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: 102,
+            bottom: 30,
             left: 0,
             right: 0,
             child: Center(
@@ -720,35 +764,25 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
           ),
           Positioned(
             bottom: 30,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Badge(
-                isLabelVisible: _mensajesSinLeerTotales > 0,
-                label: Text(
-                  '$_mensajesSinLeerTotales',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-                backgroundColor: Colors.red,
-                largeSize: 18,
-                child: FloatingActionButton.extended(
-                  heroTag: 'fab_mensajes',
-                  backgroundColor: const Color(0xFF4CAF50),
-                  onPressed: _abrirMensajes,
-                  icon: const Icon(Icons.chat_bubble_rounded, color: Colors.white),
-                  label: const Text('Mensajes', style: TextStyle(color: Colors.white)),
+            right: 30,
+            child: Badge(
+              isLabelVisible: _mensajesSinLeerTotales > 0,
+              label: Text(
+                '$_mensajesSinLeerTotales',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-            ),
-          ),
-          Positioned(
-            bottom: 30,
-            right: 30,
-            child: FloatingActionButton(
-              heroTag: 'fab_directorio',
-              backgroundColor: const Color(0xFF448AFF),
-              onPressed: _abrirDirectorio,
-              child: const Icon(Icons.grid_view_rounded, color: Colors.white),
+              backgroundColor: Colors.red,
+              largeSize: 18,
+              child: FloatingActionButton(
+                heroTag: 'fab_menu',
+                tooltip: 'Contactos y mensajes',
+                backgroundColor: const Color(0xFF448AFF),
+                onPressed: _abrirMenu,
+                child: const Icon(Icons.menu_rounded, color: Colors.white),
+              ),
             ),
           ),
         ],
