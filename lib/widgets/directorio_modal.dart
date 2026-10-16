@@ -1,10 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../config.dart';
+import '../screens/citofono_audio_screen.dart';
 
 class DirectorioModal extends StatefulWidget {
   final String miRut;
+  final http.Client? client;
   final Set<String> rutosOcupados;
   final Function(String rut, String tipo) onLlamar;
   // --- NUEVO: Recibe el mapa con los mensajes sin leer por remitente ---
@@ -13,6 +18,7 @@ class DirectorioModal extends StatefulWidget {
   const DirectorioModal({
     super.key,
     required this.miRut,
+    this.client,
     required this.rutosOcupados,
     required this.onLlamar,
     this.mensajesSinLeerPorUsuario = const {}, // Por defecto vacío por si acaso
@@ -23,61 +29,391 @@ class DirectorioModal extends StatefulWidget {
 }
 
 class _DirectorioModalState extends State<DirectorioModal> {
-  List<dynamic> _usuarios = [];
-  List<dynamic> _filtrados = [];
+  // El backend informa los IDs conectados, pero no sus propietarios.
+  // Asociaciones confirmadas con la configuración de cada placa.
+  static const _rutPorCitofono = <String, String>{
+    'citofono-1': '99999999',
+    'citofono-2': '24242424',
+  };
+  static const _intervaloActualizacion = Duration(seconds: 5);
+  static const _tiempoLimite = Duration(seconds: 8);
+
+  late final http.Client _client;
+  Timer? _timer;
   final _searchCtrl = TextEditingController();
+  final Map<String, Map<String, dynamic>> _usuariosPorRut = {};
+  List<Map<String, dynamic>> _contactosUsuarios = [];
+  List<Map<String, dynamic>> _citofonos = [];
+  List<Map<String, dynamic>> _usuarios = [];
+  List<Map<String, dynamic>> _filtrados = [];
+  Set<String>? _ocupadosServidor;
+  String? _citofonoActivo;
+  String? _iniciandoLlamada;
+  String _nombreSesion = '';
+  String? _errorUsuarios;
+  String? _errorCitofonos;
+  String? _errorLlamada;
+  DateTime? _ultimoIntentoNombres;
   bool _loading = true;
+  bool _cargandoUsuarios = false;
+  bool _actualizandoCitofonos = false;
 
   @override
   void initState() {
     super.initState();
+    _client = widget.client ?? http.Client();
     _cargarUsuarios();
+    _timer = Timer.periodic(_intervaloActualizacion, (_) {
+      if (!_loading && _iniciandoLlamada == null) _actualizarCitofonos();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _searchCtrl.dispose();
+    // Una petición de llamada pendiente debe poder cancelarse en el servidor.
+    if (widget.client == null && _iniciandoLlamada == null) _client.close();
+    super.dispose();
+  }
+
+  String _normalizarRut(dynamic value) =>
+      (value ?? '').toString().replaceAll(RegExp(r'[.\s-]'), '').toUpperCase();
+
+  String _textoBusqueda(dynamic value) => (value ?? '')
+      .toString()
+      .toLowerCase()
+      .replaceAll('á', 'a')
+      .replaceAll('é', 'e')
+      .replaceAll('í', 'i')
+      .replaceAll('ó', 'o')
+      .replaceAll('ú', 'u')
+      .trim();
+
+  Future<dynamic> _consultarJson(String path) async {
+    final respuesta =
+        await _client.get(Uri.parse('$kBaseUrl$path')).timeout(_tiempoLimite);
+    if (respuesta.statusCode != 200) {
+      throw StateError('Consulta no disponible');
+    }
+    return jsonDecode(utf8.decode(respuesta.bodyBytes));
+  }
+
+  List<Map<String, dynamic>> _leerUsuarios(dynamic data) {
+    if (data is! List) {
+      throw const FormatException('Lista de usuarios inválida');
+    }
+    return data
+        .whereType<Map>()
+        .map((u) => Map<String, dynamic>.from(u))
+        .toList();
+  }
+
+  void _indexarUsuarios(List<Map<String, dynamic>> usuarios) {
+    for (final usuario in usuarios) {
+      final rut = _normalizarRut(usuario['rut_usuario']);
+      if (rut.isEmpty) continue;
+      // Mantener también apellido_2 si el listado de chat no lo incluye.
+      _usuariosPorRut[rut] = {...?_usuariosPorRut[rut], ...usuario};
+    }
+  }
+
+  Future<void> _cargarNombreSesion() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_normalizarRut(prefs.getString('rut')) !=
+          _normalizarRut(widget.miRut)) {
+        return;
+      }
+      _nombreSesion = (prefs.getString('nombre') ?? '').trim();
+      if (_nombreSesion.isNotEmpty) {
+        _indexarUsuarios([
+          {
+            'rut_usuario': widget.miRut,
+            'nombres': _nombreSesion,
+            'id_dpto': prefs.getString('dpto') ?? '',
+          }
+        ]);
+      }
+    } catch (_) {
+      // Los nombres del servidor siguen siendo la fuente principal.
+    }
   }
 
   Future<void> _cargarUsuarios() async {
+    if (_cargandoUsuarios || _iniciandoLlamada != null) return;
+    _cargandoUsuarios = true;
+    _ultimoIntentoNombres = null;
     try {
-      final res = await http.get(Uri.parse('$kBaseUrl/usuarios-todos?rut=${widget.miRut}'));
-      final List data = jsonDecode(res.body);
-      final List<dynamic> contactos = [
-        {
-          'rut_usuario': 'CITOFONO',
-          'nombres': 'Citófono',
-          'apellido_1': 'principal',
-          'id_dpto': 'Acceso',
-          'es_citofono': true,
-        },
-        ...data,
-      ];
+      await _cargarNombreSesion();
+      final data = await _consultarJson(
+          '/usuarios-todos?rut=${Uri.encodeQueryComponent(widget.miRut)}');
+      final usuarios = _leerUsuarios(data);
+      if (!mounted) return;
+      _indexarUsuarios(usuarios);
       setState(() {
-        _usuarios = contactos;
-        _filtrados = contactos;
-        _loading = false;
+        _contactosUsuarios = usuarios;
+        _errorUsuarios = null;
       });
     } catch (_) {
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(
+            () => _errorUsuarios = 'No se pudieron actualizar los contactos.');
+      }
+    } finally {
+      _cargandoUsuarios = false;
+      if (mounted) {
+        await _actualizarCitofonos();
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _reconstruirContactos();
+          });
+        }
+      }
     }
   }
 
-  void _filtrar(String query) {
-    final q = query.toLowerCase().trim();
-    if (q.isEmpty) {
-      setState(() => _filtrados = _usuarios);
+  Future<Set<String>> _consultarOcupados() async {
+    try {
+      final data = await _consultarJson('/usuarios-en-llamada');
+      if (data is! List) throw const FormatException('Estado inválido');
+      return data.map(_normalizarRut).toSet();
+    } catch (_) {
+      return _ocupadosServidor ??
+          widget.rutosOcupados.map(_normalizarRut).toSet();
+    }
+  }
+
+  Future<void> _completarNombres(Set<String> dispositivos) async {
+    final faltanNombres = dispositivos.any((id) {
+      final rut = _rutPorCitofono[id];
+      return rut != null && !_usuariosPorRut.containsKey(_normalizarRut(rut));
+    });
+    if (!faltanNombres) return;
+    final ahora = DateTime.now();
+    if (_ultimoIntentoNombres != null &&
+        ahora.difference(_ultimoIntentoNombres!) <
+            const Duration(seconds: 30)) {
       return;
     }
+    _ultimoIntentoNombres = ahora;
+    try {
+      // Este listado también incluye propietarios fuera del filtro de rol.
+      // Se usa solo para resolver nombres, sin ampliar los contactos normales.
+      final data = await _consultarJson(
+          '/api/chat/contactos?rut=${Uri.encodeQueryComponent(widget.miRut)}');
+      if (data is Map && data['contactos'] is List) {
+        _indexarUsuarios(_leerUsuarios(data['contactos']));
+      }
+    } catch (_) {
+      // Mostrar el RUT real si todavía no se pudo resolver su nombre.
+    }
+  }
+
+  Map<String, dynamic> _crearCitofono(String deviceId) {
+    final rut = _rutPorCitofono[deviceId];
+    final propietario =
+        rut == null ? null : _usuariosPorRut[_normalizarRut(rut)];
+    final nombre = propietario == null
+        ? ''
+        : ['nombres', 'apellido_1', 'apellido_2']
+            .map((campo) => (propietario[campo] ?? '').toString().trim())
+            .where((parte) => parte.isNotEmpty)
+            .join(' ');
+    final titulo = rut == null
+        ? 'Citofono sin asociación'
+        : 'Citofono de ${nombre.isEmpty ? 'RUT $rut' : nombre}';
+    return {
+      'rut_usuario': rut ?? '',
+      'nombres': titulo,
+      'apellido_1': '',
+      'id_dpto': propietario?['id_dpto'] ?? '',
+      'es_citofono': true,
+      'device_id': deviceId,
+    };
+  }
+
+  Future<void> _actualizarCitofonos() async {
+    if (_actualizandoCitofonos || !mounted) return;
+    _actualizandoCitofonos = true;
+    try {
+      final resultados = await Future.wait<dynamic>([
+        _consultarJson('/api/esp32/audio-status'),
+        _consultarOcupados(),
+      ]);
+      final estado = resultados[0];
+      if (estado is! Map ||
+          estado['esp32_tx_devices'] is! List ||
+          estado['esp32_rx_devices'] is! List) {
+        throw const FormatException(
+            'El servidor no entrega los equipos conectados');
+      }
+      Set<String> leerIds(dynamic values) => (values as List)
+          .whereType<String>()
+          .map((id) => id.trim())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      // Una tarjeta requiere los dos canales del equipo conectados.
+      final conectados = leerIds(estado['esp32_tx_devices'])
+          .intersection(leerIds(estado['esp32_rx_devices']));
+      await _completarNombres(conectados);
+      if (!mounted) return;
+      final ids = conectados.toList()..sort();
+      final activo = estado['active_citofono_device_id']?.toString().trim();
+      setState(() {
+        _citofonos = ids.map(_crearCitofono).toList();
+        _citofonoActivo = activo == null || activo.isEmpty ? null : activo;
+        _ocupadosServidor = resultados[1] as Set<String>;
+        _errorCitofonos = null;
+        _reconstruirContactos();
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          // Sin comprobación válida, no afirmar que el equipo está conectado.
+          _citofonos = [];
+          _errorCitofonos =
+              'No se pudieron comprobar los citofonos conectados.';
+          _reconstruirContactos();
+        });
+      }
+    } finally {
+      _actualizandoCitofonos = false;
+    }
+  }
+
+  void _reconstruirContactos() {
+    _usuarios = [..._citofonos, ..._contactosUsuarios];
+    _filtrados = _buscar(_searchCtrl.text);
+  }
+
+  List<Map<String, dynamic>> _buscar(String query) {
+    final q = _textoBusqueda(query);
+    if (q.isEmpty) return _usuarios;
+    return _usuarios.where((u) {
+      final dpto = (u['id_dpto'] ?? '').toString();
+      return _textoBusqueda([
+        u['nombres'] ?? '',
+        u['apellido_1'] ?? '',
+        u['apellido_2'] ?? '',
+        u['rut_usuario'] ?? '',
+        u['device_id'] ?? '',
+        'depto departamento $dpto',
+        u['es_citofono'] == true ? 'citofono porteria acceso' : '',
+      ].join(' '))
+          .contains(q);
+    }).toList();
+  }
+
+  void _filtrar(String query) => setState(() => _filtrados = _buscar(query));
+
+  bool _estaOcupado(Map<String, dynamic> usuario) {
+    final ocupados =
+        _ocupadosServidor ?? widget.rutosOcupados.map(_normalizarRut).toSet();
+    if (usuario['es_citofono'] == true) {
+      return _citofonoActivo != null || ocupados.contains('CITOFONO');
+    }
+    return ocupados.contains(_normalizarRut(usuario['rut_usuario']));
+  }
+
+  Future<void> _cancelarLlamada(String callId, String deviceId) async {
+    try {
+      await _client
+          .post(Uri.parse('$kBaseUrl/api/esp32/end-call'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'call_id': callId,
+                'device_id': deviceId,
+                'room': widget.miRut,
+                'rut_emisor': widget.miRut,
+                'rut_receptor': 'CITOFONO',
+                'reason': 'canceled',
+                'estado': 'cancelada',
+              }))
+          .timeout(_tiempoLimite);
+    } catch (_) {}
+  }
+
+  Future<void> _llamarCitofono(Map<String, dynamic> usuario) async {
+    if (_iniciandoLlamada != null) return;
+    final deviceId = usuario['device_id'].toString();
+    final navigator = Navigator.of(context);
+    final rutaDirectorio = ModalRoute.of(context);
+    String? callId;
+    io.Socket? socketLlamada;
     setState(() {
-      _filtrados = _usuarios.where((u) {
-        final dpto = (u['id_dpto'] ?? '').toString();
-        final superString = [
-          u['nombres'] ?? '',
-          u['apellido_1'] ?? '',
-          u['rut_usuario'] ?? '',
-          'depto', 'departamento', dpto,
-          'depto $dpto', 'departamento $dpto',
-          u['es_citofono'] == true ? 'citofono citófono porteria portería acceso' : '',
-        ].join(' ').toLowerCase();
-        return superString.contains(q);
-      }).toList();
+      _iniciandoLlamada = deviceId;
+      _errorLlamada = null;
     });
+    try {
+      final respuesta = await _client
+          .post(Uri.parse('$kBaseUrl/llamar'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'rut': 'CITOFONO',
+                'tipo': 'audio',
+                'caller_rut': widget.miRut,
+                'caller_dpto': _nombreSesion.isEmpty ? 'App' : _nombreSesion,
+                'device_id': deviceId,
+              }))
+          .timeout(_tiempoLimite);
+      if (respuesta.statusCode == 409) {
+        if (mounted) setState(() => _errorLlamada = 'Conserjería ocupada');
+        return;
+      }
+      final data = jsonDecode(utf8.decode(respuesta.bodyBytes));
+      if (respuesta.statusCode < 200 ||
+          respuesta.statusCode >= 300 ||
+          data is! Map ||
+          data['success'] != true ||
+          (data['call_id'] ?? '').toString().isEmpty) {
+        throw StateError('No se pudo iniciar la llamada');
+      }
+      callId = data['call_id'].toString();
+      if (!mounted || !navigator.mounted || rutaDirectorio?.isCurrent != true) {
+        return;
+      }
+      // Socket propio: conservar intacto el de la pantalla principal.
+      socketLlamada = io.io(kBaseUrl, {
+        'transports': ['websocket'],
+        'autoConnect': false,
+        'forceNew': true,
+        'multiplex': false,
+      });
+      socketLlamada.onConnect((_) {
+        socketLlamada?.emit('register', {'room': widget.miRut});
+      });
+      socketLlamada.connect();
+      navigator.pop();
+      await navigator.push(MaterialPageRoute<void>(
+        builder: (_) => CitofonoAudioScreen(
+          miRut: widget.miRut,
+          rutDestino: 'CITOFONO',
+          room: widget.miRut,
+          isCaller: true,
+          socket: socketLlamada,
+          callId: callId,
+        ),
+      ));
+    } catch (_) {
+      if (mounted) {
+        setState(
+            () => _errorLlamada = 'No se pudo iniciar la llamada al citofono.');
+      }
+    } finally {
+      // También liberar el canal al salir de audio con el botón Atrás.
+      // El call_id evita finalizar una llamada posterior de otro equipo.
+      if (callId != null) {
+        await _cancelarLlamada(callId, deviceId);
+      }
+      socketLlamada?.dispose();
+      if (mounted) {
+        setState(() => _iniciandoLlamada = null);
+      } else if (widget.client == null) {
+        _client.close();
+      }
+    }
   }
 
   @override
@@ -96,16 +432,38 @@ class _DirectorioModalState extends State<DirectorioModal> {
             // Handle
             Container(
               margin: const EdgeInsets.symmetric(vertical: 10),
-              width: 40, height: 4,
-              decoration: BoxDecoration(color: Colors.grey[700], borderRadius: BorderRadius.circular(2)),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.grey[700],
+                  borderRadius: BorderRadius.circular(2)),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Directorio de Contactos',
-                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w300)),
+                  const Expanded(
+                    child: Text(
+                      'Directorio de Contactos',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w300,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Actualizar directorio',
+                    onPressed: _loading ||
+                            _cargandoUsuarios ||
+                            _actualizandoCitofonos ||
+                            _iniciandoLlamada != null
+                        ? null
+                        : _cargarUsuarios,
+                    icon: const Icon(Icons.refresh, color: Colors.grey),
+                  ),
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.grey),
                     onPressed: () => Navigator.pop(context),
@@ -136,33 +494,62 @@ class _DirectorioModalState extends State<DirectorioModal> {
                 ),
               ),
             ),
+            if (_errorUsuarios != null ||
+                _errorCitofonos != null ||
+                _errorLlamada != null)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  [_errorUsuarios, _errorCitofonos, _errorLlamada]
+                      .whereType<String>()
+                      .join('\n'),
+                  style: const TextStyle(color: Colors.orange),
+                ),
+              ),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF448AFF)))
-                  : ListView.builder(
-                      controller: scrollCtrl,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _filtrados.length,
-                      itemBuilder: (_, i) {
-                        final u = _filtrados[i];
-                        final rut = (u['rut_usuario'] ?? '').toString();
-                        final ocupado = widget.rutosOcupados.contains(rut);
-                        
-                        // --- NUEVO: Obtener la cantidad de mensajes sin leer de este usuario específico ---
-                        final unreadCount = widget.mensajesSinLeerPorUsuario[rut] ?? 0;
+                  ? const Center(
+                      child:
+                          CircularProgressIndicator(color: Color(0xFF448AFF)))
+                  : _filtrados.isEmpty
+                      ? const Center(
+                          child: Text(
+                          'No hay contactos para mostrar.',
+                          style: TextStyle(color: Colors.grey),
+                        ))
+                      : ListView.builder(
+                          controller: scrollCtrl,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: _filtrados.length,
+                          itemBuilder: (_, i) {
+                            final u = _filtrados[i];
+                            final rut = (u['rut_usuario'] ?? '').toString();
+                            final ocupado =
+                                _estaOcupado(u) || _iniciandoLlamada != null;
 
-                        return _UserCard(
-                          usuario: u,
-                          ocupado: ocupado,
-                          unreadCount: unreadCount, // <-- Enviado a la tarjeta
-                          onLlamar: (tipo) async {
-                            Navigator.pop(context);
-                            await Future.delayed(const Duration(milliseconds: 300));
-                            widget.onLlamar(rut, tipo);
+                            // --- NUEVO: Obtener la cantidad de mensajes sin leer de este usuario específico ---
+                            final unreadCount =
+                                widget.mensajesSinLeerPorUsuario[rut] ?? 0;
+
+                            return _UserCard(
+                              usuario: u,
+                              ocupado: ocupado,
+                              unreadCount: unreadCount,
+                              enviando: _iniciandoLlamada == u['device_id'],
+                              onLlamar: (tipo) async {
+                                if (u['es_citofono'] == true) {
+                                  await _llamarCitofono(u);
+                                  return;
+                                }
+                                Navigator.pop(context);
+                                await Future.delayed(
+                                    const Duration(milliseconds: 300));
+                                widget.onLlamar(rut, tipo);
+                              },
+                            );
                           },
-                        );
-                      },
-                    ),
+                        ),
             ),
           ],
         ),
@@ -174,19 +561,22 @@ class _DirectorioModalState extends State<DirectorioModal> {
 class _UserCard extends StatelessWidget {
   final Map usuario;
   final bool ocupado;
-  final int unreadCount; // --- NUEVO ---
+  final int unreadCount;
+  final bool enviando;
   final Function(String tipo) onLlamar;
 
   const _UserCard({
     required this.usuario,
     required this.ocupado,
-    required this.unreadCount, // --- NUEVO ---
+    required this.unreadCount,
+    this.enviando = false,
     required this.onLlamar,
   });
 
   @override
   Widget build(BuildContext context) {
-    final bool esCitofono = usuario['es_citofono'] == true || usuario['rut_usuario'] == 'CITOFONO';
+    final bool esCitofono =
+        usuario['es_citofono'] == true || usuario['rut_usuario'] == 'CITOFONO';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(15),
@@ -203,29 +593,36 @@ class _UserCard extends StatelessWidget {
               // Usamos Flexible para que nombres muy largos no rompan el diseño con los badges
               Flexible(
                 child: Text(
-                  '${usuario['nombres'] ?? ''} ${usuario['apellido_1'] ?? ''}',
+                  '${usuario['nombres'] ?? ''} ${usuario['apellido_1'] ?? ''}'
+                      .trim(),
                   style: const TextStyle(color: Colors.white, fontSize: 16),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              
+
               // --- NUEVO: Badge indicador de mensajes no leídos enviados por este usuario ---
               if (unreadCount > 0) ...[
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFF9800), // Color naranjo/advertencia llamativo
+                    color: const Color(
+                        0xFFFF9800), // Color naranjo/advertencia llamativo
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.mail_rounded, color: Colors.white, size: 12),
+                      const Icon(Icons.mail_rounded,
+                          color: Colors.white, size: 12),
                       const SizedBox(width: 4),
                       Text(
                         '$unreadCount',
-                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
@@ -235,19 +632,23 @@ class _UserCard extends StatelessWidget {
               if (ocupado) ...[
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
                     color: const Color(0xFFff5252),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: const Text('🔴 Ocupado', style: TextStyle(color: Colors.white, fontSize: 11)),
+                  child: const Text('🔴 Ocupado',
+                      style: TextStyle(color: Colors.white, fontSize: 11)),
                 ),
               ],
             ],
           ),
           const SizedBox(height: 4),
           Text(
-            'Depto/Casa: ${usuario['id_dpto'] ?? 'N/A'} | RUT: ${usuario['rut_usuario']}',
+            esCitofono
+                ? 'Conectado · ${usuario['device_id']} | RUT: ${usuario['rut_usuario'].toString().isEmpty ? 'Sin asociación' : usuario['rut_usuario']}'
+                : 'Depto/Casa: ${usuario['id_dpto'] ?? 'N/A'} | RUT: ${usuario['rut_usuario']}',
             style: const TextStyle(color: Colors.grey, fontSize: 13),
           ),
           const SizedBox(height: 12),
@@ -260,7 +661,8 @@ class _UserCard extends StatelessWidget {
                     icon: const Icon(Icons.videocam_rounded, size: 18),
                     label: const Text('Videollamar'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: ocupado ? Colors.grey[800] : const Color(0xFF448AFF),
+                      backgroundColor:
+                          ocupado ? Colors.grey[800] : const Color(0xFF448AFF),
                       foregroundColor: Colors.white,
                       shape: const StadiumBorder(),
                     ),
@@ -271,10 +673,17 @@ class _UserCard extends StatelessWidget {
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: ocupado ? null : () => onLlamar('audio'),
-                  icon: Icon(esCitofono ? Icons.doorbell_rounded : Icons.call_rounded, size: 18),
-                  label: Text(esCitofono ? 'Llamar al citófono' : 'Llamar'),
+                  icon: Icon(
+                      esCitofono ? Icons.doorbell_rounded : Icons.call_rounded,
+                      size: 18),
+                  label: Text(enviando
+                      ? 'Llamando...'
+                      : esCitofono
+                          ? 'Llamar al citófono'
+                          : 'Llamar'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: ocupado ? Colors.grey[800] : const Color(0xFF4CAF50),
+                    backgroundColor:
+                        ocupado ? Colors.grey[800] : const Color(0xFF4CAF50),
                     foregroundColor: Colors.white,
                     shape: const StadiumBorder(),
                   ),
