@@ -35,8 +35,18 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
   MediaStream? _localStream;
   String _status = 'Conectando...';
   bool _callEnded = false;
+  DateTime? _connectedAt;
   late IO.Socket _socket;
   Timer? _timeoutTimer;
+  Timer? _durationTimer;
+
+  String _formatearDuracion(int segundosTotales) {
+    final minutos = segundosTotales ~/ 60;
+    final segundos = segundosTotales % 60;
+
+    return '${minutos.toString().padLeft(2, '0')}:'
+        '${segundos.toString().padLeft(2, '0')}';
+  }
 
   bool _speakerOn = true;
   bool _muted = false;
@@ -57,9 +67,27 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
     setState(() {});
   }
 
+  void _iniciarContadorDuracion() {
+    _durationTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _connectedAt != null) {
+        setState(() {});
+      }
+    });
+  }
+
+  String get _estadoConDuracion {
+    if (_connectedAt == null) return _status;
+
+    final segundos =
+        DateTime.now().difference(_connectedAt!).inSeconds;
+
+    return '$_status · ${_formatearDuracion(segundos)}';
+  }
+
   @override
   void initState() {
     super.initState();
+    _iniciarContadorDuracion();
     _setupSocket();
     _initCall();
     if (widget.isCaller) {
@@ -138,6 +166,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
       if (event.streams.isNotEmpty) {
         setState(() {
           _remoteRenderer.srcObject = event.streams[0];
+          _connectedAt ??= DateTime.now();
           _status = 'Llamada conectada';
         });
       }
@@ -181,6 +210,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
       await _peerConnection!.setLocalDescription(answer);
       _socket.emit('answer', {'room': widget.room, 'sdp': answer.toMap()});
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Answer enviado!')));
+      _connectedAt ??= DateTime.now();
       if (mounted) setState(() => _status = 'Llamada conectada');
     });
 
@@ -189,6 +219,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
       await _peerConnection!.setRemoteDescription(
         RTCSessionDescription(data['sdp']['sdp'], data['sdp']['type']),
       );
+      _connectedAt ??= DateTime.now();
       if (mounted) setState(() => _status = 'Llamada conectada');
     });
 
@@ -241,6 +272,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
   Future<void> _finalizar({bool remoto = false}) async {
     if (_callEnded) return;
     _callEnded = true;
+    _durationTimer?.cancel();
 
     // SIEMPRE liberar MI rut cuando termine la llamada
     if (widget.miRut.isNotEmpty) {
@@ -273,10 +305,39 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
           'rut_receptor': widget.isCaller ? widget.rutDestino : widget.miRut,
           'tipo_llamada': widget.tipo,
           'estado': (widget.isCaller && _status != 'Llamada conectada') ? 'perdida' : 'finalizada',
-          'duracion_segundos': 0,
+          'duracion_segundos': _connectedAt == null ? 0 : DateTime.now().difference(_connectedAt!).inSeconds,
         }),
       );
     } catch (_) {}
+
+    // Se guarda un mensaje genérico en el chat por el registro de la llamada
+
+    final perdida = widget.isCaller && _status != 'Llamada conectada';
+    final duracion = _connectedAt == null
+        ? 0
+        : DateTime.now().difference(_connectedAt!).inSeconds;
+
+    if (widget.isCaller) {
+      try {
+        final response = await http.post(
+          Uri.parse('$kBaseUrl/api/chat/messages'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'rut_emisor': widget.miRut,
+            'rut_receptor': widget.rutDestino,
+            'mensaje': perdida
+                ? '📞 Llamada perdida'
+                : '📞 Llamada finalizada · Duración: ${_formatearDuracion(duracion)}',
+          }),
+        ).timeout(const Duration(seconds: 10));
+
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          debugPrint('No se pudo guardar el mensaje de llamada: ${response.body}');
+        }
+      } catch (e) {
+        debugPrint('Error guardando el mensaje de llamada: $e');
+      }
+    }
 
     if (mounted) {
       if (remoto) {
@@ -291,6 +352,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
   @override
   void dispose() {
     _timeoutTimer?.cancel();
+    _durationTimer?.cancel();
     _localRenderer.dispose();
     _remoteRenderer.dispose();
     _socket.off('offer');
@@ -368,7 +430,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  _status,
+                  _estadoConDuracion,
                   style: const TextStyle(color: Colors.white70, fontSize: 14),
                 ),
               ),
@@ -439,7 +501,7 @@ class _LlamadaScreenState extends State<LlamadaScreen> {
                   borderRadius: BorderRadius.circular(22),
                 ),
                 child: Text(
-                  _status,
+                  _estadoConDuracion,
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white70),
                 ),

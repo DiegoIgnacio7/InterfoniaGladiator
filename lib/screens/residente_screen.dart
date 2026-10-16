@@ -13,9 +13,9 @@ import '../helpers/citofono_call_utils.dart';
 import '../helpers/call_notifications.dart';
 import 'login_screen.dart';
 import '../widgets/directorio_modal.dart';
-import '../widgets/dialer_modal.dart';
-import '../widgets/historial_modal.dart';
 import '../widgets/mensajes_modal.dart';
+import '../widgets/recados_modal.dart';
+import '../widgets/puertas_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -468,21 +468,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
     } catch (_) {}
   }
 
-  void _abrirDialer() async {
-    await _cargarOcupados();
-    if (!mounted) return;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => DialerModal(
-        miRut: miRut,
-        rutosOcupados: rutosOcupados,
-        onLlamar: _llamar,
-      ),
-    );
-  }
-
   void _abrirConfigWifiEsp32() {
     showDialog(
       context: context,
@@ -558,21 +543,35 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
     );
   }
 
+  void _abrirPuertas() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PuertasModal(miRut: miRut),
+    );
+  }
+
+  void _abrirRecados() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => RecadosModal(miRut: miRut),
+    );
+  }
+
   void _abrirMensajes() {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => MensajesModal(miRut: miRut),
-    );
-  }
-
-  void _abrirHistorial() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => HistorialModal(miRut: miRut),
+      builder: (_) => MensajesModal(
+        miRut: miRut,
+        soloConserjes: true,
+      ),
     );
   }
 
@@ -760,7 +759,24 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
                         ),
                         const SizedBox(height: 14),
-                        // 2x2 FEATURE CARDS GRID
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: _abrirRecados,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF151C2C),
+                              foregroundColor: const Color(0xFF20CDFF),
+                              padding: const EdgeInsets.all(18),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
+                            icon: const Icon(Icons.sticky_note_2_rounded),
+                            label: const Text('Recados'),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        // FEATURE CARDS GRID
                         GridView.count(
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
@@ -769,9 +785,9 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                           mainAxisSpacing: 14,
                           childAspectRatio: 1.2,
                           children: [
-                            // CARD 1: MARCAR DEPARTAMENTO
+                            // CARD 1: PUERTAS
                             InkWell(
-                              onTap: _abrirDialer,
+                              onTap: _abrirPuertas,
                               borderRadius: BorderRadius.circular(20),
                               child: Container(
                                 padding: const EdgeInsets.all(16),
@@ -800,14 +816,14 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                                         color: Colors.white.withOpacity(0.2),
                                         shape: BoxShape.circle,
                                       ),
-                                      child: const Icon(Icons.dialpad_rounded, color: Colors.white, size: 24),
+                                      child: const Icon(Icons.door_front_door_rounded, color: Colors.white, size: 24),
                                     ),
                                     const Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text('Marcar Depto', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                                        Text('Puertas', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                                         SizedBox(height: 2),
-                                        Text('Intercomunicador', style: TextStyle(fontSize: 11, color: Colors.white70)),
+                                        Text('Acceso a puertas', style: TextStyle(fontSize: 11, color: Colors.white70)),
                                       ],
                                     ),
                                   ],
@@ -946,19 +962,6 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                         // QUICK NAV FOOTER BAR
                         Row(
                           children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(
-                                  side: BorderSide(color: Colors.white.withOpacity(0.12)),
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                ),
-                                onPressed: _abrirHistorial,
-                                icon: const Icon(Icons.history_rounded, color: Colors.white70),
-                                label: const Text('Historial', style: TextStyle(color: Colors.white70)),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
                             Expanded(
                               child: OutlinedButton.icon(
                                 style: OutlinedButton.styleFrom(

@@ -12,6 +12,9 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
 import android.view.KeyEvent
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -38,6 +41,31 @@ class MainActivity : FlutterActivity() {
             val plugged = intent.getIntExtra("state", 0) == 1
             updateHandsetLifted(plugged, "HEADSET_PLUG")
             headsetPlugged = plugged
+        }
+    }
+    private fun ocultarBarraNavegacion() {
+        val controller =
+            WindowCompat.getInsetsController(window, window.decorView)
+
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+        controller.hide(WindowInsetsCompat.Type.navigationBars())
+    }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        window.decorView.post {
+            ocultarBarraNavegacion()
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            window.decorView.post {
+                ocultarBarraNavegacion()
+            }
         }
     }
 
