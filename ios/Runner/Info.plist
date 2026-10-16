@@ -90,5 +90,8 @@
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>La aplicación requiere su ubicación para funciones de control de acceso y seguridad del condominio.</string>
 
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>La aplicación requiere acceso continuo a su ubicación para el control de accesos y la seguridad dentro del condominio.</string>
+
 </dict>
 </plist>
