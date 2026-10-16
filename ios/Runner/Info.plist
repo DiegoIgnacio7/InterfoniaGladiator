@@ -80,5 +80,15 @@
     <array>
         <string>audio</string>
     </array>
+
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Necesitamos acceso a su galería para enviar imágenes en el chat de soporte y conserjería.</string>
+
+    <key>NSCameraUsageDescription</key>
+    <string>Necesitamos acceso a su cámara para tomar fotografías y adjuntarlas en los reportes.</string>
+    
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>La aplicación requiere su ubicación para funciones de control de acceso y seguridad del condominio.</string>
+
 </dict>
 </plist>
