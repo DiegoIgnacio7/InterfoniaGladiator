@@ -46,6 +46,7 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
   DateTime? _startedAt;
 
   String _status = 'Preparando llamada...';
+  String _tituloCitofono = 'Llamada de citófono';
   String? _callId;
   bool _ending = false;
   bool _audioStarted = false;
@@ -71,6 +72,7 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
     _physicalHandsetWasLifted = !widget.initialSpeakerOn;
     _setupSocket();
     _startHandsetMonitor();
+    _cargarNombreCitofono();
 
     if (_esLlamadaAppAlCitofono) {
       _status = 'Llamando al citófono...';
@@ -84,6 +86,57 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
     _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
+  }
+
+  String _normalizarRut(dynamic value) =>
+      (value ?? '').toString().replaceAll(RegExp(r'[.\s-]'), '').toUpperCase();
+
+  Future<dynamic> _consultarJson(String path) async {
+    final respuesta = await http
+        .get(Uri.parse('$kBaseUrl$path'))
+        .timeout(const Duration(seconds: 8));
+    if (respuesta.statusCode != 200) {
+      throw StateError('Consulta no disponible');
+    }
+    return jsonDecode(utf8.decode(respuesta.bodyBytes));
+  }
+
+  void _actualizarNombreCitofono(dynamic call) {
+    if (call is! Map || !mounted || _ending) return;
+    final callId = _callId;
+    if (callId != null && callId.isNotEmpty) {
+      if (call['call_id']?.toString() != callId) return;
+    } else if (_normalizarRut(call['app_rut']) !=
+        _normalizarRut(widget.miRut)) {
+      return;
+    }
+
+    final dispositivo = call['citofono'];
+    final nombre = dispositivo is Map
+        ? (dispositivo['display_name'] ?? '').toString().trim()
+        : '';
+    final deviceId = (call['device_id'] ?? '').toString().trim();
+    final titulo = nombre.isNotEmpty
+        ? nombre
+        : deviceId.isNotEmpty
+            ? 'Citofono $deviceId'
+            : 'Llamada de citófono';
+    if (_tituloCitofono != titulo) {
+      setState(() => _tituloCitofono = titulo);
+    }
+  }
+
+  Future<void> _cargarNombreCitofono() async {
+    try {
+      final callId = _callId;
+      final query = callId == null || callId.isEmpty
+          ? ''
+          : '?call_id=${Uri.encodeQueryComponent(callId)}';
+      final data = await _consultarJson('/api/citofono/state$query');
+      _actualizarNombreCitofono(data is Map ? data['call'] : null);
+    } catch (_) {
+      // La consulta del nombre no interrumpe el audio ni el control de llamada.
+    }
   }
 
   void _setupSocket() {
@@ -109,11 +162,13 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
 
     _socket?.on('citofono-answered', (data) {
       if (!_matchesCall(data)) return;
+      _actualizarNombreCitofono(data);
       _onRemoteAnswered();
     });
 
     _socket?.on('citofono-call-state', (data) {
       if (!_matchesCall(data)) return;
+      _actualizarNombreCitofono(data);
       final state = (data is Map ? data['state'] : '').toString();
       if (state == 'active') _onRemoteAnswered();
       if (state == 'ended') _finalizar(remoto: true, reason: 'remote_ended');
@@ -242,6 +297,7 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
         final call = data['call'];
         if (call is! Map) return;
         if (!_matchesCall(call)) return;
+        _actualizarNombreCitofono(call);
         final state = call['state']?.toString();
         if (state == 'active') {
           _onRemoteAnswered();
@@ -382,7 +438,7 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = widget.isCaller ? 'Llamando a ${widget.rutDestino}' : 'De ${widget.rutDestino}';
+    final subtitle = widget.isCaller ? 'Llamada saliente' : 'Llamada entrante';
     final waitingForAnswer = _esLlamadaAppAlCitofono && !_answered;
 
     return Scaffold(
@@ -408,10 +464,10 @@ class _CitofonoAudioScreenState extends State<CitofonoAudioScreen> {
                 ),
               ),
               const SizedBox(height: 28),
-              const Text(
-                'Llamada de citófono',
+              Text(
+                _tituloCitofono,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+                style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
               Text(

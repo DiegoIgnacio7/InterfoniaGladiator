@@ -30,19 +30,12 @@ class DirectorioModal extends StatefulWidget {
 }
 
 class _DirectorioModalState extends State<DirectorioModal> {
-  // El backend informa los IDs conectados, pero no sus propietarios.
-  // Asociaciones confirmadas con la configuración de cada placa.
-  static const _rutPorCitofono = <String, String>{
-    'citofono-1': '99999999',
-    'citofono-2': '24242424',
-  };
   static const _intervaloActualizacion = Duration(seconds: 5);
   static const _tiempoLimite = Duration(seconds: 8);
 
   late final http.Client _client;
   Timer? _timer;
   final _searchCtrl = TextEditingController();
-  final Map<String, Map<String, dynamic>> _usuariosPorRut = {};
   Map<String, dynamic> _ultimosMensajesPorRut = {};
   List<Map<String, dynamic>> _contactosUsuarios = [];
   List<Map<String, dynamic>> _citofonos = [];
@@ -111,15 +104,6 @@ class _DirectorioModalState extends State<DirectorioModal> {
         .toList();
   }
 
-  void _indexarUsuarios(List<Map<String, dynamic>> usuarios) {
-    for (final usuario in usuarios) {
-      final rut = _normalizarRut(usuario['rut_usuario']);
-      if (rut.isEmpty) continue;
-      // Mantener también apellido_2 si el listado de chat no lo incluye.
-      _usuariosPorRut[rut] = {...?_usuariosPorRut[rut], ...usuario};
-    }
-  }
-
   Future<void> _cargarNombreSesion() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -128,15 +112,6 @@ class _DirectorioModalState extends State<DirectorioModal> {
         return;
       }
       _nombreSesion = (prefs.getString('nombre') ?? '').trim();
-      if (_nombreSesion.isNotEmpty) {
-        _indexarUsuarios([
-          {
-            'rut_usuario': widget.miRut,
-            'nombres': _nombreSesion,
-            'id_dpto': prefs.getString('dpto') ?? '',
-          }
-        ]);
-      }
     } catch (_) {
       // Los nombres del servidor siguen siendo la fuente principal.
     }
@@ -151,7 +126,6 @@ class _DirectorioModalState extends State<DirectorioModal> {
           '/usuarios-todos?rut=${Uri.encodeQueryComponent(widget.miRut)}');
       final usuarios = _leerUsuarios(data);
       if (!mounted) return;
-      _indexarUsuarios(usuarios);
       setState(() {
         _contactosUsuarios = usuarios;
         _errorUsuarios = null;
@@ -204,12 +178,7 @@ class _DirectorioModalState extends State<DirectorioModal> {
       };
       if (!mounted) return;
       setState(() {
-        // También resuelve propietarios, sin ampliar los contactos del directorio.
-        _indexarUsuarios(contactos);
         _ultimosMensajesPorRut = mensajes;
-        _citofonos = _citofonos
-            .map((c) => _crearCitofono(c['device_id'].toString()))
-            .toList();
         _errorMensajes = null;
         _reconstruirContactos();
       });
@@ -221,24 +190,14 @@ class _DirectorioModalState extends State<DirectorioModal> {
     }
   }
 
-  Map<String, dynamic> _crearCitofono(String deviceId) {
-    final rut = _rutPorCitofono[deviceId];
-    final propietario =
-    rut == null ? null : _usuariosPorRut[_normalizarRut(rut)];
-    final nombre = propietario == null
-        ? ''
-        : ['nombres', 'apellido_1', 'apellido_2']
-        .map((campo) => (propietario[campo] ?? '').toString().trim())
-        .where((parte) => parte.isNotEmpty)
-        .join(' ');
-    final titulo = rut == null
-        ? 'Citofono sin asociación'
-        : 'Citofono de ${nombre.isEmpty ? 'RUT $rut' : nombre}';
+  Map<String, dynamic> _crearCitofono(Map<String, dynamic> dispositivo) {
+    final deviceId = dispositivo['device_id'].toString();
+    final titulo = (dispositivo['display_name'] ?? '').toString().trim();
     return {
-      'rut_usuario': rut ?? '',
-      'nombres': titulo,
+      'rut_usuario': (dispositivo['rut_usuario'] ?? '').toString(),
+      'nombres': titulo.isEmpty ? 'Citofono $deviceId' : titulo,
       'apellido_1': '',
-      'id_dpto': propietario?['id_dpto'] ?? '',
+      'id_dpto': dispositivo['id_dpto'] ?? '',
       'es_citofono': true,
       'device_id': deviceId,
     };
@@ -268,11 +227,23 @@ class _DirectorioModalState extends State<DirectorioModal> {
       // Una tarjeta requiere los dos canales del equipo conectados.
       final conectados = leerIds(estado['esp32_tx_devices'])
           .intersection(leerIds(estado['esp32_rx_devices']));
+      final dispositivos = <String, Map<String, dynamic>>{};
+      final citofonos = estado['citofonos'];
+      if (citofonos is List) {
+        for (final dispositivo in citofonos.whereType<Map>()) {
+          final id = (dispositivo['device_id'] ?? '').toString().trim();
+          if (id.isNotEmpty) {
+            dispositivos[id] = Map<String, dynamic>.from(dispositivo);
+          }
+        }
+      }
       if (!mounted) return;
       final ids = conectados.toList()..sort();
       final activo = estado['active_citofono_device_id']?.toString().trim();
       setState(() {
-        _citofonos = ids.map(_crearCitofono).toList();
+        _citofonos = ids
+            .map((id) => _crearCitofono(dispositivos[id] ?? {'device_id': id}))
+            .toList();
         _citofonoActivo = activo == null || activo.isEmpty ? null : activo;
         _ocupadosServidor = resultados[1] as Set<String>;
         _errorCitofonos = null;
