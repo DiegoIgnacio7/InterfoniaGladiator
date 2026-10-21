@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../config.dart';
+import '../screens/citofono_audio_screen.dart';
+import '../screens/llamada_screen.dart';
 import '../services/recados_excel_service.dart';
 
 class RecadosModal extends StatefulWidget {
@@ -31,6 +34,8 @@ class _RecadosModalState extends State<RecadosModal> {
   bool _exportando = false;
   bool? _esAdmin;
   String? _error;
+  io.Socket? _socketLlamada;
+  _IntentoRecado? _intentoLlamada;
   final _busquedaPendientes = TextEditingController();
   final _busquedaResueltos = TextEditingController();
 
@@ -56,7 +61,12 @@ class _RecadosModalState extends State<RecadosModal> {
     _timer?.cancel();
     _busquedaPendientes.dispose();
     _busquedaResueltos.dispose();
-    if (widget.client == null) _client.close();
+    final intento = _intentoLlamada;
+    if (intento != null) unawaited(intento.cancelar());
+    _socketLlamada?.dispose();
+    // Permitir que /resolver termine para cancelar también si el modal se cierra
+    // antes de que el servidor devuelva el identificador de la llamada.
+    if (widget.client == null && _socketLlamada == null) _client.close();
     super.dispose();
   }
 
@@ -186,7 +196,7 @@ class _RecadosModalState extends State<RecadosModal> {
         builder: (_) =>
             _NuevoRecadoDialog(onGuardar: (titulo, descripcion) async {
           await _peticion('POST', '/recados',
-              {'titulo': titulo, 'descripcion': descripcion});
+              {'titulo': titulo, 'descripcion': descripcion, 'origen': 'app'});
         }),
       );
       if (creado == true && mounted) await _cargar(silencioso: true);
@@ -218,13 +228,131 @@ class _RecadosModalState extends State<RecadosModal> {
                 ));
         if (confirmar != true || !mounted) return;
       }
-      await _peticion(eliminar ? 'DELETE' : 'PUT',
-          '/recados/${recado['id']}${eliminar ? '' : '/resolver'}');
+      if (eliminar) {
+        await _peticion('DELETE', '/recados/${recado['id']}');
+      } else {
+        await _llamarParaResolver(recado);
+      }
       if (mounted) await _cargar(silencioso: true);
     } catch (e) {
       if (mounted) setState(() => _error = _mensajeError(e));
     } finally {
       if (mounted) setState(() => _ocupado = false);
+    }
+  }
+
+  Future<void> _llamarParaResolver(Map<String, dynamic> recado) async {
+    final navigator = Navigator.of(context);
+    final rutaRecados = ModalRoute.of(context);
+    final conectado = Completer<void>();
+    final finalizadas = <String>{};
+    final socketLlamada = io.io(kBaseUrl, {
+      'transports': ['websocket'],
+      'autoConnect': false,
+      'forceNew': true,
+      'multiplex': false,
+    });
+    _socketLlamada = socketLlamada;
+    _IntentoRecado? intento;
+    String? socketId;
+    socketLlamada.onConnect((_) {
+      socketLlamada.emit('register', {'room': widget.miRut, 'recados': true});
+    });
+    socketLlamada.on('recado-socket-ready', (data) {
+      if (data is! Map || data['socket_id'] is! String) return;
+      final id = (data['socket_id'] as String).trim();
+      if (id.isEmpty) return;
+      socketId = id;
+      if (!conectado.isCompleted) conectado.complete();
+    });
+    socketLlamada.onDisconnect((_) {
+      socketId = null;
+      if (!conectado.isCompleted) {
+        conectado.completeError(
+            Exception('Se perdió la conexión del canal de llamadas.'));
+      }
+    });
+    socketLlamada.onConnectError((_) {
+      if (!conectado.isCompleted) {
+        conectado.completeError(
+            Exception('No se pudo conectar el canal de llamadas.'));
+      }
+    });
+    socketLlamada.on('end-call', (data) {
+      if (data is Map && data['call_id'] != null) {
+        finalizadas.add(data['call_id'].toString());
+      }
+    });
+
+    try {
+      socketLlamada.connect();
+      await conectado.future.timeout(const Duration(seconds: 10));
+      if (!mounted || !navigator.mounted || rutaRecados?.isCurrent == false) {
+        return;
+      }
+      final socketIdIntento = socketId;
+      if (!socketLlamada.connected || socketIdIntento == null) {
+        throw Exception('Se perdió la conexión del canal de llamadas.');
+      }
+      final data = await _peticion('PUT', '/recados/${recado['id']}/resolver',
+          {'socket_id': socketIdIntento});
+      final callId = (data['call_id'] ?? '').toString();
+      if (callId.isEmpty) {
+        throw Exception('El servidor no identificó la llamada del recado.');
+      }
+      intento = _IntentoRecado(
+        recadoId: recado['id'].toString(),
+        callId: callId,
+        rut: widget.miRut,
+      );
+      _intentoLlamada = intento;
+      final room = (data['room'] ?? '').toString();
+      final origen = (data['origen'] ?? '').toString();
+      final destino = (data['target_rut'] ?? '').toString();
+      final deviceId = (data['device_id'] ?? '').toString();
+      if (room.isEmpty ||
+          destino.isEmpty ||
+          (origen != 'app' && origen != 'citofono') ||
+          (origen == 'citofono' &&
+              (destino != 'CITOFONO' || deviceId.isEmpty))) {
+        throw Exception('El servidor no devolvió el destino de la llamada.');
+      }
+      if (!mounted || !navigator.mounted || rutaRecados?.isCurrent == false) {
+        return;
+      }
+      if (!socketLlamada.connected ||
+          socketId != socketIdIntento ||
+          data['state'] == 'ended' ||
+          finalizadas.contains(callId)) {
+        throw Exception('La llamada terminó antes de abrirse. Reintenta.');
+      }
+      await navigator.push<void>(MaterialPageRoute(
+        builder: (_) => origen == 'citofono'
+            ? CitofonoAudioScreen(
+                room: room,
+                isCaller: true,
+                socket: socketLlamada,
+                miRut: widget.miRut,
+                rutDestino: destino,
+                callId: callId,
+              )
+            : LlamadaScreen(
+                room: room,
+                isCaller: true,
+                tipo: 'audio',
+                socket: socketLlamada,
+                miRut: widget.miRut,
+                rutDestino: destino,
+              ),
+      ));
+    } finally {
+      // Cerrar el intento no resuelve el recado: el servidor solo lo hace
+      // cuando confirma que contestó el destinatario de esta llamada.
+      if (intento != null) await intento.cancelar();
+      if (identical(_intentoLlamada, intento)) _intentoLlamada = null;
+      socketLlamada.dispose();
+      if (identical(_socketLlamada, socketLlamada)) _socketLlamada = null;
+      if (!mounted && widget.client == null) _client.close();
     }
   }
 
@@ -405,6 +533,13 @@ class _RecadosModalState extends State<RecadosModal> {
         final r = recados[i];
         final rutEmisor = r['rut_emisor']?.toString().trim() ?? '';
         final rutVisible = rutEmisor.isEmpty ? 'No registrado' : rutEmisor;
+        final origen = r['origen']?.toString();
+        final origenVisible = switch (origen) {
+          'app' => 'Aplicación',
+          'citofono' =>
+            'Citófono (${r['device_id'] ?? 'equipo no registrado'})',
+          _ => 'No registrado',
+        };
         final propio = _normalizarRut(r['rut_emisor']?.toString() ?? '') ==
             _normalizarRut(widget.miRut);
         final dia = _dia(fechaGrupo(r));
@@ -461,6 +596,9 @@ class _RecadosModalState extends State<RecadosModal> {
                   Text('Estado: ${resueltos ? 'Resuelto' : 'Pendiente'}',
                       style: TextStyle(color: color)),
                   const SizedBox(height: 6),
+                  Text('Origen: $origenVisible',
+                      style: const TextStyle(color: Colors.white54)),
+                  const SizedBox(height: 6),
                   Text('Fecha de creación: ${_fecha(r['fecha_creacion'])}',
                       style: const TextStyle(color: Colors.white54)),
                   if (resueltos)
@@ -482,10 +620,10 @@ class _RecadosModalState extends State<RecadosModal> {
                                   : Colors.red.shade700,
                               foregroundColor: Colors.white),
                           icon: Icon(_esAdmin == true
-                              ? Icons.check_circle_outline
+                              ? Icons.call
                               : Icons.delete_outline),
                           label: Text(_esAdmin == true
-                              ? 'Marcar como resuelto'
+                              ? 'Llamar para resolver'
                               : 'Cancelar $_nombreSingular'),
                         )),
                   ],
@@ -567,6 +705,43 @@ class _RecadosModalState extends State<RecadosModal> {
                 ]),
               )),
         ));
+  }
+}
+
+class _IntentoRecado {
+  final String recadoId;
+  final String callId;
+  final String rut;
+  Future<void>? _cancelacion;
+
+  _IntentoRecado({
+    required this.recadoId,
+    required this.callId,
+    required this.rut,
+  });
+
+  Future<void> cancelar() => _cancelacion ??= _cancelar();
+
+  Future<void> _cancelar() async {
+    // Cliente independiente: la pantalla puede haberse desmontado y cerrado
+    // el cliente que utiliza para consultar recados.
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$kBaseUrl/recados/$recadoId/llamada/cancelar'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'rut': rut, 'call_id': callId}),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('No se pudo confirmar el cierre de la llamada del recado.');
+      }
+    } catch (_) {
+      debugPrint('No se pudo confirmar el cierre de la llamada del recado.');
+    } finally {
+      client.close();
+    }
   }
 }
 

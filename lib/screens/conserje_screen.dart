@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import '../config.dart';
@@ -35,6 +36,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
   Set<String> rutosOcupados = {};
   bool _socketConectado = false;
   bool _enviandoAviso = false;
+  String? _versionApp;
   final _ringtonePlayer = FlutterRingtonePlayer();
   bool _dialogoEntranteAbierto = false;
 
@@ -91,7 +93,25 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
   @override
   void initState() {
     super.initState();
+    _cargarVersionApp();
     _cargarSesion();
+  }
+
+  Future<void> _cargarVersionApp() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final version = info.version.trim();
+      final compilacion = info.buildNumber.trim();
+      if (!mounted) return;
+      setState(() {
+        _versionApp = version.isEmpty
+            ? 'Versión no disponible'
+            : 'v $version${compilacion.isEmpty ? '' : '+$compilacion'}';
+      });
+    } catch (e) {
+      debugPrint('No se pudo consultar la versión de la aplicación: $e');
+      if (mounted) setState(() => _versionApp = 'Versión no disponible');
+    }
   }
 
   // --- MODIFICADO: Ahora también carga los contadores guardados al abrir la app ---
@@ -683,10 +703,26 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
               ],
             ),
           ),
-          const Positioned(
+          Positioned(
             top: 50,
             left: 20,
-            child: Text('Inicio', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w300, color: Colors.white)),
+            right: 180,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Inicio', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w300, color: Colors.white)),
+                if (_versionApp != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _versionApp!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Colors.white54),
+                  ),
+                ],
+              ],
+            ),
           ),
           Positioned(
             top: 40,

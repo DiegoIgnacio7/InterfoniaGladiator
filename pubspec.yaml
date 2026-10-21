@@ -1,7 +1,7 @@
 name: citofono_app
 description: App de Intercomunicador con videollamadas WebRTC y Firebase
 publish_to: 'none'
-version: 2.0.0+52
+version: 2.0.0+53
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -22,6 +22,7 @@ dependencies:
   firebase_messaging: ^15.1.3
   # Almacenamiento local (sesión)
   shared_preferences: ^2.3.2
+  package_info_plus: ^8.3.1
   # Permisos de cámara y micrófono
   permission_handler: ^11.3.1
   # Iconos de Material Design
