@@ -188,6 +188,36 @@ class _MensajesModalState extends State<MensajesModal> {
           contacto['es_admin'] == 1)
           .toList();
 
+      final ordenOriginal = {
+        for (var i = 0; i < contactos.length; i++) _contactoRut(contactos[i]): i,
+      };
+      // La fecha del último mensaje conserva la posición después de leerlo.
+      contactos.sort((a, b) {
+        final ultimoA = a['last_message'];
+        final ultimoB = b['last_message'];
+        final fechaA =
+            _fechaEnvioLocal(ultimoA is Map ? ultimoA['fecha_hora'] : null);
+        final fechaB =
+            _fechaEnvioLocal(ultimoB is Map ? ultimoB['fecha_hora'] : null);
+
+        if (fechaA == null && fechaB != null) return 1;
+        if (fechaA != null && fechaB == null) return -1;
+        if (fechaA != null && fechaB != null) {
+          final porFecha = fechaB.compareTo(fechaA);
+          if (porFecha != 0) return porFecha;
+        }
+
+        final idA =
+            int.tryParse((ultimoA is Map ? ultimoA['id'] : '').toString()) ?? 0;
+        final idB =
+            int.tryParse((ultimoB is Map ? ultimoB['id'] : '').toString()) ?? 0;
+        final porId = idB.compareTo(idA);
+        if (porId != 0) return porId;
+
+        return ordenOriginal[_contactoRut(a)]!
+            .compareTo(ordenOriginal[_contactoRut(b)]!);
+      });
+
       if (!mounted) return;
       setState(() {
         _contactos = contactos;
