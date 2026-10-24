@@ -18,6 +18,7 @@ import '../widgets/recados_modal.dart';
 import '../widgets/puertas_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
+import '../services/notification_history_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class ResidenteScreen extends StatefulWidget {
@@ -34,6 +35,8 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
   late IO.Socket socket;
   Set<String> rutosOcupados = {};
   bool _socketConectado = false;
+  bool _socketReconectando = false;
+  bool _cerrandoSesion = false;
   final _ringtonePlayer = FlutterRingtonePlayer();
   bool _dialogoEntranteAbierto = false;
 
@@ -124,33 +127,29 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
     });
 
     socket.onConnect((_) {
-      if (!mounted) return;
-      setState(() => _socketConectado = true);
+      if (!mounted || _cerrandoSesion) return;
+      setState(() {
+        _socketConectado = true;
+        _socketReconectando = false;
+      });
       socket.emit('register', {'room': miRut});
     });
 
     socket.onDisconnect((_) {
-      if (!mounted) return;
-      setState(() => _socketConectado = false);
+      if (!mounted || _cerrandoSesion) return;
+      setState(() {
+        _socketConectado = false;
+        _socketReconectando = true;
+      });
     });
 
     socket.onConnectError((e) {
-      if (!mounted) return;
-      setState(() => _socketConectado = false);
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          backgroundColor: const Color(0xFF222233),
-          title: const Text('⚠️ Error de conexión (Socket)', style: TextStyle(color: Colors.orange)),
-          content: Text('No se pudo conectar a $kBaseUrl\n\nDetalle: $e', style: const TextStyle(color: Colors.white70)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK', style: TextStyle(color: Color(0xFF448AFF))),
-            )
-          ],
-        ),
-      );
+      if (!mounted || _cerrandoSesion) return;
+      setState(() {
+        _socketConectado = false;
+        _socketReconectando = true;
+      });
+      debugPrint('Reconectando Socket: $e');
     });
 
     socket.connect(); // Conectar explícitamente
@@ -576,9 +575,9 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
   }
 
   void _cerrarSesion() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    _cerrandoSesion = true;
     socket.disconnect();
+    await NotificationHistoryService.clearSession();
     if (!mounted) return;
     Navigator.pushReplacement(context,
         MaterialPageRoute(builder: (_) => const LoginScreen()));
@@ -671,7 +670,11 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  _socketConectado ? 'En línea' : 'Desconectado',
+                                  _socketConectado
+                                      ? 'En línea'
+                                      : _socketReconectando
+                                          ? 'Reconectando'
+                                          : 'Desconectado',
                                   style: TextStyle(
                                     color: _socketConectado ? const Color(0xFF10B981) : Colors.white54,
                                     fontSize: 11,

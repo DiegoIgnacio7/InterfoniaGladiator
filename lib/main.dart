@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -10,6 +11,7 @@ import 'helpers/citofono_call_utils.dart';
 import 'helpers/call_notifications.dart';
 import 'helpers/message_navigation.dart';
 import 'widgets/mensajes_modal.dart';
+import 'services/notification_history_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'dart:ui';
@@ -57,7 +59,9 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  await NotificationHistoryService.recordPush(message, confirmDelivery: true);
   final type = message.data['type'];
+  if (type == 'notification_record') return;
 
   if (type == 'call') {
     final callerRut = message.data['caller_rut'];
@@ -154,6 +158,11 @@ class _CitofonoAppState extends State<CitofonoApp> {
 
       FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
         debugPrint('🔔 Mensaje recibido en primer plano');
+        unawaited(NotificationHistoryService.recordPush(
+          message,
+          confirmDelivery: true,
+        ));
+        if (message.data['type'] == 'notification_record') return;
         
         final prefs = await SharedPreferences.getInstance();
         final miRut = prefs.getString('rut') ?? '';
@@ -197,6 +206,11 @@ class _CitofonoAppState extends State<CitofonoApp> {
   }
 
   void _detenerTodoYEntrar(RemoteMessage message) {
+    unawaited(NotificationHistoryService.recordPush(
+      message,
+      confirmDelivery: true,
+    ));
+    if (message.data['type'] == 'notification_record') return;
     if (message.data['type'] == 'chat_message') {
       openMessagesFromNotification(peerRut: message.data['rut_emisor']?.toString());
       return;

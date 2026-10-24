@@ -16,8 +16,10 @@ import 'login_screen.dart';
 import '../widgets/directorio_modal.dart';
 import '../widgets/reportes_modal.dart';
 import '../widgets/mensajes_modal.dart';
+import '../widgets/notificaciones_panel_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
+import '../services/notification_history_service.dart';
 
 enum _OpcionMenuConserje { directorio, mensajes }
 
@@ -28,17 +30,25 @@ class ConserjeScreen extends StatefulWidget {
   State<ConserjeScreen> createState() => _ConserjeScreenState();
 }
 
-class _ConserjeScreenState extends State<ConserjeScreen> {
+class _ConserjeScreenState extends State<ConserjeScreen>
+    with WidgetsBindingObserver {
   String miRut = '';
   String miNombre = '';
   String miDpto = '';
   late IO.Socket socket;
+  bool _socketInicializado = false;
+  bool _cerrandoSesion = false;
   Set<String> rutosOcupados = {};
   bool _socketConectado = false;
+  bool _socketReconectando = false;
   bool _enviandoAviso = false;
   String? _versionApp;
   final _ringtonePlayer = FlutterRingtonePlayer();
   bool _dialogoEntranteAbierto = false;
+  List<NotificationHistoryEntry> _notificaciones = [];
+  bool _loadingNotificaciones = true;
+  String? _errorNotificaciones;
+  int _consultaNotificaciones = 0;
 
   // Estados locales para mensajes sin leer
   int _mensajesSinLeerTotales = 0;
@@ -93,8 +103,116 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    NotificationHistoryService.changes.addListener(_actualizarNotificaciones);
     _cargarVersionApp();
     _cargarSesion();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _actualizarNotificaciones();
+      if (_socketInicializado && !_cerrandoSesion && !socket.connected) {
+        socket.connect();
+      }
+      unawaited(_recuperarNotificacionesPendientes());
+    }
+  }
+
+  Future<void> _recuperarNotificacionesPendientes() async {
+    if (!mounted || _cerrandoSesion || miRut.isEmpty) return;
+    final rut = miRut;
+    try {
+      await NotificationHistoryService.recoverPending(rut);
+    } catch (error) {
+      // La cola del servidor conserva los avisos hasta confirmar su guardado.
+      debugPrint('No se pudieron recuperar las notificaciones pendientes: $error');
+    }
+  }
+
+  Future<void> _recibirRegistroNotificacion(Map<String, dynamic> registro) async {
+    if (!mounted || _cerrandoSesion || miRut.isEmpty) return;
+    final rut = miRut;
+    try {
+      await NotificationHistoryService.receiveAndConfirm(rut, registro);
+    } catch (error) {
+      debugPrint('No se pudo guardar una notificación recibida: $error');
+      if (mounted && !_cerrandoSesion && rut == miRut) {
+        setState(() => _errorNotificaciones =
+            'No se pudo guardar una notificación recibida.');
+      }
+    }
+  }
+
+  void _actualizarNotificaciones() {
+    if (mounted && !_cerrandoSesion && miRut.isNotEmpty) {
+      unawaited(_cargarNotificaciones());
+    }
+  }
+
+  Future<void> _cargarNotificaciones() async {
+    if (!mounted || _cerrandoSesion || miRut.isEmpty) return;
+    final consulta = ++_consultaNotificaciones;
+    final rut = miRut;
+    try {
+      final notificaciones = await NotificationHistoryService.load(rut);
+      if (!mounted ||
+          _cerrandoSesion ||
+          consulta != _consultaNotificaciones ||
+          rut != miRut) {
+        return;
+      }
+      setState(() {
+        _notificaciones = notificaciones;
+        _loadingNotificaciones = false;
+        _errorNotificaciones = null;
+      });
+    } catch (_) {
+      if (!mounted || _cerrandoSesion ||
+          consulta != _consultaNotificaciones || rut != miRut) {
+        return;
+      }
+      setState(() {
+        _loadingNotificaciones = false;
+        _errorNotificaciones = 'No se pudieron cargar las notificaciones.';
+      });
+    }
+  }
+
+  Future<bool> _descartarNotificacion(
+      NotificationHistoryEntry notificacion) async {
+    if (!mounted || _cerrandoSesion || miRut.isEmpty) return false;
+    final rut = miRut;
+    try {
+      await NotificationHistoryService.dismiss(rut, notificacion.id);
+      return mounted && !_cerrandoSesion && miRut == rut;
+    } catch (_) {
+      if (mounted && !_cerrandoSesion) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo descartar la notificación. Inténtalo nuevamente.'),
+          ),
+        );
+      }
+      return false;
+    }
+  }
+
+  void _registrarNotificacion(
+    String type,
+    dynamic data, {
+    String? title,
+    String? body,
+  }) {
+    if (_cerrandoSesion || miRut.isEmpty) return;
+    unawaited(NotificationHistoryService.recordEvent(
+      rut: miRut,
+      type: type,
+      data: data is Map ? Map<String, dynamic>.from(data) : {},
+      title: title,
+      body: body,
+    ));
   }
 
   Future<void> _cargarVersionApp() async {
@@ -133,6 +251,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
       mapCargado = decoded.map((key, value) => MapEntry(key, value as int));
     } catch (_) {}
 
+    if (!mounted) return;
     setState(() {
       miRut = rutCargado;
       miNombre = nombreCargado;
@@ -140,6 +259,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
       _mensajesSinLeerTotales = totalesGuardados;
       _mensajesSinLeerPorUsuario = mapCargado;
     });
+    _actualizarNotificaciones();
 
     // NUEVO: Ejecutar el registro del token si el RUT existe
     if (miRut.isNotEmpty) {
@@ -147,6 +267,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
     }
 
     _conectarSocket();
+    unawaited(_recuperarNotificacionesPendientes());
     _abrirMensajesSiPendiente();
   }
 
@@ -173,42 +294,51 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
       'transports': ['websocket'],
       'autoConnect': false,
     });
+    _socketInicializado = true;
 
     socket.onConnect((_) {
-      if (!mounted) return;
-      setState(() => _socketConectado = true);
-      socket.emit('register', {'room': miRut});
+      if (!mounted || _cerrandoSesion) return;
+      setState(() {
+        _socketConectado = true;
+        _socketReconectando = false;
+      });
+      final rut = miRut;
+      socket.emitWithAck('register', {'room': rut}, ack: (respuesta) {
+        if (!mounted || _cerrandoSesion || rut != miRut || !socket.connected) {
+          return;
+        }
+        if (respuesta is Map && respuesta['success'] == true) {
+          unawaited(_recuperarNotificacionesPendientes());
+        }
+      });
     });
 
     socket.onDisconnect((_) {
-      if (!mounted) return;
-      setState(() => _socketConectado = false);
+      if (!mounted || _cerrandoSesion) return;
+      setState(() {
+        _socketConectado = false;
+        _socketReconectando = true;
+      });
     });
 
     socket.onConnectError((e) {
-      if (!mounted) return;
-      setState(() => _socketConectado = false);
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          backgroundColor: const Color(0xFF222233),
-          title: const Text('⚠️ Error de conexión (Socket)', style: TextStyle(color: Colors.orange)),
-          content: Text('No se pudo conectar a $kBaseUrl\n\nDetalle: $e', style: const TextStyle(color: Colors.white70)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK', style: TextStyle(color: Color(0xFF448AFF))),
-            )
-          ],
-        ),
-      );
+      if (!mounted || _cerrandoSesion) return;
+      setState(() {
+        _socketConectado = false;
+        _socketReconectando = true;
+      });
+      debugPrint('Error de conexión (Socket): $e');
     });
 
-    socket.connect();
+    socket.on('notification-recorded', (data) {
+      if (data is! Map) return;
+      unawaited(_recibirRegistroNotificacion(Map<String, dynamic>.from(data)));
+    });
 
     socket.on('incoming-call', (data) {
       if (!mounted) return;
       if (data is Map && data['caller_rut'] == miRut) return;
+      _registrarNotificacion('call', data);
       _mostrarLlamadaEntrante(data);
     });
 
@@ -225,6 +355,12 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
 
     socket.on('busy', (_) {
       if (!mounted) return;
+      _registrarNotificacion(
+        'busy',
+        null,
+        title: 'Línea ocupada',
+        body: 'El usuario está en otra llamada.',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('🔴 Línea ocupada. El usuario está en otra llamada.'),
@@ -240,6 +376,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
       final emisor = (data['rut_emisor'] ?? '').toString();
       
       if (receptor == miRut && emisor != miRut) {
+        _registrarNotificacion('chat_message', data);
         setState(() {
           _mensajesSinLeerTotales++;
           _mensajesSinLeerPorUsuario[emisor] = (_mensajesSinLeerPorUsuario[emisor] ?? 0) + 1;
@@ -265,6 +402,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
 
     socket.on('missed-call', (data) {
       if (!mounted) return;
+      _registrarNotificacion('missed_call', data);
       _detenerTono();
       if (_dialogoEntranteAbierto) {
         Navigator.of(context, rootNavigator: true).pop();
@@ -291,6 +429,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
         Navigator.of(context, rootNavigator: true).pop();
       }
     });
+    socket.connect();
   }
 
   void _mostrarLlamadaEntrante(dynamic data) {
@@ -674,16 +813,18 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
   }
 
   void _cerrarSesion() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    socket.disconnect();
+    _cerrandoSesion = true;
+    if (_socketInicializado) socket.disconnect();
+    await NotificationHistoryService.clearSession();
     if (!mounted) return;
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
   }
 
   @override
   void dispose() {
-    socket.disconnect();
+    WidgetsBinding.instance.removeObserver(this);
+    NotificationHistoryService.changes.removeListener(_actualizarNotificaciones);
+    if (_socketInicializado) socket.disconnect();
     super.dispose();
   }
 
@@ -711,7 +852,7 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Inicio', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w300, color: Colors.white)),
+                const Text('Interfonía Gladiator', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w300, color: Colors.white)),
                 if (_versionApp != null) ...[
                   const SizedBox(height: 4),
                   Text(
@@ -747,7 +888,11 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
                       ),
                       const SizedBox(width: 5),
                       Text(
-                        _socketConectado ? 'Conectado' : 'Desconectado',
+                        _socketConectado
+                            ? 'Conectado'
+                            : _socketReconectando
+                                ? 'Reconectando'
+                                : 'Desconectado',
                         style: const TextStyle(color: Colors.white, fontSize: 10),
                       ),
                     ],
@@ -761,15 +906,26 @@ class _ConserjeScreenState extends State<ConserjeScreen> {
               ],
             ),
           ),
-          Center(
+          Positioned(
+            top: 120,
+            bottom: 110,
+            left: 20,
+            right: 20,
             child: Column(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Bienvenido a la app', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w300, color: Colors.white)),
-                const SizedBox(height: 10),
                 Text('RUT: $miRut', style: const TextStyle(color: Colors.grey, fontSize: 16)),
-                const SizedBox(height: 5),
-                const Text('Rol: Conserje', style: TextStyle(color: Color(0xFF4CAF50), fontSize: 16)),
+                const SizedBox(height: 20),
+                Expanded(
+                  child: NotificacionesPanel(
+                    notificaciones: _notificaciones,
+                    loading: _loadingNotificaciones,
+                    error: _errorNotificaciones,
+                    onDismiss: _descartarNotificacion,
+                    onTap: (notificacion) {
+                      if (notificacion.type == 'chat_message') _abrirMensajes();
+                    },
+                  ),
+                ),
               ],
             ),
           ),
