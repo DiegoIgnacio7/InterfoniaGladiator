@@ -20,6 +20,7 @@ import '../widgets/notificaciones_panel_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
 import '../services/notification_history_service.dart';
+import '../services/emergency_service.dart';
 
 enum _OpcionMenuConserje { directorio, mensajes }
 
@@ -41,7 +42,7 @@ class _ConserjeScreenState extends State<ConserjeScreen>
   Set<String> rutosOcupados = {};
   bool _socketConectado = false;
   bool _socketReconectando = false;
-  bool _enviandoAviso = false;
+  bool _enviandoAvisoEmergencia = false;
   String? _versionApp;
   final _ringtonePlayer = FlutterRingtonePlayer();
   bool _dialogoEntranteAbierto = false;
@@ -295,6 +296,11 @@ class _ConserjeScreenState extends State<ConserjeScreen>
       'autoConnect': false,
     });
     _socketInicializado = true;
+    EmergencyService.instance.attachSocket(
+      socket,
+      rut: miRut,
+      isConserje: true,
+    );
 
     socket.onConnect((_) {
       if (!mounted || _cerrandoSesion) return;
@@ -771,17 +777,30 @@ class _ConserjeScreenState extends State<ConserjeScreen>
     );
   }
 
-  Future<void> _enviarAviso() async {
-    if (_enviandoAviso) return;
-    setState(() => _enviandoAviso = true);
+  Future<void> _enviarAvisoEmergencia() async {
+    if (_enviandoAvisoEmergencia || _cerrandoSesion ||
+        !_socketInicializado || miRut.isEmpty) {
+      return;
+    }
+    final rutEnvio = miRut;
+    final socketEnvio = socket;
+    setState(() => _enviandoAvisoEmergencia = true);
 
     String resultado;
     try {
       final response = await http.post(
-        Uri.parse('$kBaseUrl/api/esp32/aviso'),
+        Uri.parse('$kBaseUrl/api/esp32/aviso-emergencia'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'mensaje': 'Hola ESP32, aviso desde la app'}),
+        body: jsonEncode({
+          'rut': rutEnvio,
+          'mensaje': 'Aviso de emergencia desde Conserjería.',
+        }),
       ).timeout(const Duration(seconds: 10));
+
+      if (!mounted || _cerrandoSesion || miRut != rutEnvio ||
+          !identical(socket, socketEnvio)) {
+        return;
+      }
 
       Map<String, dynamic> data = {};
       try {
@@ -792,18 +811,40 @@ class _ConserjeScreenState extends State<ConserjeScreen>
       }
 
       if (response.statusCode == 200 && data['success'] == true) {
-        resultado = 'Aviso enviado. Revisa el monitor serie de Arduino.';
+        EmergencyService.instance.applyServerState(data['emergencia']);
+        final total = data['total'];
+        final enviados = data['enviados'];
+        final fallidos = data['fallidos'];
+        if (total is! int || enviados is! int || fallidos is! int ||
+            total < 0 || enviados < 0 || fallidos < 0 ||
+            enviados + fallidos != total) {
+          resultado = 'Emergencia activada en las aplicaciones. No se pudo '
+              'confirmar el envío a los citófonos.';
+        } else if (total == 0) {
+          resultado = 'Emergencia activada en las aplicaciones. '
+              'No hay citófonos conectados.';
+        } else if (fallidos > 0) {
+          resultado = 'Emergencia activada en las aplicaciones y enviada a '
+              '$enviados de $total citófonos. No se pudo enviar a $fallidos.';
+        } else {
+          resultado = 'Emergencia activada en las aplicaciones y enviada a $enviados '
+              '${enviados == 1 ? 'citófono' : 'citófonos'}.';
+        }
       } else if (response.statusCode == 404) {
-        resultado = 'El servidor aún no tiene habilitado el envío de avisos.';
+        resultado = 'El servidor aún no tiene habilitado el envío de avisos '
+            'de emergencia.';
       } else {
-        resultado = data['error']?.toString() ?? 'No se pudo enviar el aviso.';
+        resultado = data['error']?.toString() ??
+            'No se pudo enviar el aviso de emergencia.';
       }
     } on TimeoutException {
-      resultado = 'El servidor no respondió a tiempo. No se pudo confirmar el envío.';
+      resultado = 'El servidor no respondió a tiempo. No se pudo confirmar '
+          'el envío del aviso de emergencia.';
     } catch (_) {
-      resultado = 'No se pudo confirmar el envío. Revisa la conexión.';
+      resultado = 'No se pudo confirmar el envío del aviso de emergencia. '
+          'Revisa la conexión.';
     } finally {
-      if (mounted) setState(() => _enviandoAviso = false);
+      if (mounted) setState(() => _enviandoAvisoEmergencia = false);
     }
 
     if (!mounted) return;
@@ -814,6 +855,7 @@ class _ConserjeScreenState extends State<ConserjeScreen>
 
   void _cerrarSesion() async {
     _cerrandoSesion = true;
+    if (_socketInicializado) EmergencyService.instance.detachSocket(socket);
     if (_socketInicializado) socket.disconnect();
     await NotificationHistoryService.clearSession();
     if (!mounted) return;
@@ -824,6 +866,7 @@ class _ConserjeScreenState extends State<ConserjeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     NotificationHistoryService.changes.removeListener(_actualizarNotificaciones);
+    if (_socketInicializado) EmergencyService.instance.detachSocket(socket);
     if (_socketInicializado) socket.disconnect();
     super.dispose();
   }
@@ -933,10 +976,12 @@ class _ConserjeScreenState extends State<ConserjeScreen>
             bottom: 30,
             left: 30,
             child: FloatingActionButton(
-              heroTag: 'fab_aviso',
-              tooltip: _enviandoAviso ? 'Enviando...' : 'Aviso',
-              backgroundColor: const Color(0xFFEF6C00),
-              onPressed: _enviandoAviso ? null : _enviarAviso,
+              heroTag: 'fab_aviso_emergencia',
+              tooltip: _enviandoAvisoEmergencia
+                  ? 'Enviando aviso de emergencia...'
+                  : 'Aviso de emergencia',
+              backgroundColor: const Color(0xFFD32F2F),
+              onPressed: _enviandoAvisoEmergencia ? null : _enviarAvisoEmergencia,
               child: const Icon(Icons.notifications_active_rounded, color: Colors.white),
             ),
           ),

@@ -19,6 +19,7 @@ import '../widgets/puertas_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
 import '../services/notification_history_service.dart';
+import '../services/emergency_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class ResidenteScreen extends StatefulWidget {
@@ -125,6 +126,11 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
       'transports': ['websocket'],
       'autoConnect': false,
     });
+    EmergencyService.instance.attachSocket(
+      socket,
+      rut: miRut,
+      isConserje: false,
+    );
 
     socket.onConnect((_) {
       if (!mounted || _cerrandoSesion) return;
@@ -576,6 +582,7 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
 
   void _cerrarSesion() async {
     _cerrandoSesion = true;
+    EmergencyService.instance.detachSocket(socket);
     socket.disconnect();
     await NotificationHistoryService.clearSession();
     if (!mounted) return;
@@ -585,6 +592,7 @@ class _ResidenteScreenState extends State<ResidenteScreen> {
 
   @override
   void dispose() {
+    EmergencyService.instance.detachSocket(socket);
     socket.disconnect();
     super.dispose();
   }

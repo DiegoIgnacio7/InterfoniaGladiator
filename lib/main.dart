@@ -12,6 +12,8 @@ import 'helpers/call_notifications.dart';
 import 'helpers/message_navigation.dart';
 import 'widgets/mensajes_modal.dart';
 import 'services/notification_history_service.dart';
+import 'services/emergency_service.dart';
+import 'screens/emergencia_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'dart:ui';
@@ -58,6 +60,9 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // El sistema muestra la notificación; la app consulta su vigencia al volver.
+  if (message.data['type'] == 'emergency') return;
 
   await NotificationHistoryService.recordPush(message, confirmDelivery: true);
   final type = message.data['type'];
@@ -138,17 +143,39 @@ void main() async {
 }
 
 class CitofonoApp extends StatefulWidget {
-  const CitofonoApp({super.key});
+  final EmergencyService? emergencyService;
+
+  const CitofonoApp({super.key, this.emergencyService});
 
   @override
   State<CitofonoApp> createState() => _CitofonoAppState();
 }
 
-class _CitofonoAppState extends State<CitofonoApp> {
+class _CitofonoAppState extends State<CitofonoApp>
+    with WidgetsBindingObserver {
+  late final _emergency = widget.emergencyService ?? EmergencyService.instance;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupInteractions();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_emergency.sync());
+    }
+  }
+
+  @override
+  Future<bool> didPopRoute() async => _emergency.current != null;
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   void _setupInteractions() async {
@@ -158,6 +185,10 @@ class _CitofonoAppState extends State<CitofonoApp> {
 
       FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
         debugPrint('🔔 Mensaje recibido en primer plano');
+        if (message.data['type'] == 'emergency') {
+          unawaited(_emergency.sync());
+          return;
+        }
         unawaited(NotificationHistoryService.recordPush(
           message,
           confirmDelivery: true,
@@ -206,6 +237,10 @@ class _CitofonoAppState extends State<CitofonoApp> {
   }
 
   void _detenerTodoYEntrar(RemoteMessage message) {
+    if (message.data['type'] == 'emergency') {
+      unawaited(_emergency.sync());
+      return;
+    }
     unawaited(NotificationHistoryService.recordPush(
       message,
       confirmDelivery: true,
@@ -266,6 +301,36 @@ class _CitofonoAppState extends State<CitofonoApp> {
       title: 'Gladiator Interfonia',
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
+      builder: (context, child) => AnimatedBuilder(
+        animation: _emergency,
+        builder: (context, _) {
+          final emergency = _emergency.current;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              ExcludeFocus(
+                excluding: emergency != null,
+                child: ExcludeSemantics(
+                  excluding: emergency != null,
+                  child: child ?? const SizedBox.shrink(),
+                ),
+              ),
+              if (emergency != null)
+                Positioned.fill(
+                  child: EmergenciaScreen(
+                    key: ValueKey(emergency.id),
+                    message: emergency.message,
+                    expiresAt: emergency.expiresAt,
+                    isConserje: _emergency.isConserje,
+                    cancelling: _emergency.cancelling,
+                    error: _emergency.error,
+                    onCancel: () => unawaited(_emergency.cancel()),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF6366F1),
