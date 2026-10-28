@@ -16,13 +16,14 @@ import 'login_screen.dart';
 import '../widgets/directorio_modal.dart';
 import '../widgets/reportes_modal.dart';
 import '../widgets/mensajes_modal.dart';
+import '../widgets/puertas_modal.dart';
 import '../widgets/notificaciones_panel_modal.dart';
 import '../helpers/message_navigation.dart';
 import '../services/esp32_audio_bridge.dart';
 import '../services/notification_history_service.dart';
 import '../services/emergency_service.dart';
 
-enum _OpcionMenuConserje { directorio, mensajes }
+enum _OpcionMenuConserje { directorio, mensajes, puertas }
 
 class ConserjeScreen extends StatefulWidget {
   const ConserjeScreen({super.key});
@@ -717,6 +718,20 @@ class _ConserjeScreenState extends State<ConserjeScreen>
                   _OpcionMenuConserje.mensajes,
                 ),
               ),
+              ListTile(
+                leading: const Icon(
+                  Icons.lock_open_rounded,
+                  color: Color(0xFF448AFF),
+                ),
+                title: const Text(
+                  'Puertas',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () => Navigator.pop(
+                  menuContext,
+                  _OpcionMenuConserje.puertas,
+                ),
+              ),
             ],
           ),
         ),
@@ -730,6 +745,9 @@ class _ConserjeScreenState extends State<ConserjeScreen>
         break;
       case _OpcionMenuConserje.mensajes:
         _abrirMensajes();
+        break;
+      case _OpcionMenuConserje.puertas:
+        _abrirPuertas();
         break;
     }
   }
@@ -765,6 +783,16 @@ class _ConserjeScreenState extends State<ConserjeScreen>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => MensajesModal(miRut: miRut),
+    );
+  }
+
+  void _abrirPuertas() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PuertasModal(miRut: miRut, soloApertura: true),
     );
   }
 
@@ -811,11 +839,18 @@ class _ConserjeScreenState extends State<ConserjeScreen>
       }
 
       if (response.statusCode == 200 && data['success'] == true) {
-        EmergencyService.instance.applyServerState(data['emergencia']);
+        final emergencia = data['emergencia'];
+        if (emergencia is! Map<String, dynamic> ||
+            emergencia['active'] is! bool) {
+          throw const FormatException('Estado de emergencia no válido.');
+        }
+        EmergencyService.instance.applyServerState(emergencia);
         final total = data['total'];
         final enviados = data['enviados'];
         final fallidos = data['fallidos'];
-        if (total is! int || enviados is! int || fallidos is! int ||
+        if (emergencia['active'] == false) {
+          resultado = 'La emergencia ya no está activa.';
+        } else if (total is! int || enviados is! int || fallidos is! int ||
             total < 0 || enviados < 0 || fallidos < 0 ||
             enviados + fallidos != total) {
           resultado = 'Emergencia activada en las aplicaciones. No se pudo '
@@ -837,6 +872,8 @@ class _ConserjeScreenState extends State<ConserjeScreen>
         resultado = data['error']?.toString() ??
             'No se pudo enviar el aviso de emergencia.';
       }
+    } on FormatException {
+      resultado = 'No se pudo confirmar el estado de la emergencia.';
     } on TimeoutException {
       resultado = 'El servidor no respondió a tiempo. No se pudo confirmar '
           'el envío del aviso de emergencia.';
@@ -1015,7 +1052,7 @@ class _ConserjeScreenState extends State<ConserjeScreen>
               largeSize: 18,
               child: FloatingActionButton(
                 heroTag: 'fab_menu',
-                tooltip: 'Contactos y mensajes',
+                tooltip: 'Contactos, mensajes y puertas',
                 backgroundColor: const Color(0xFF448AFF),
                 onPressed: _abrirMenu,
                 child: const Icon(Icons.menu_rounded, color: Colors.white),

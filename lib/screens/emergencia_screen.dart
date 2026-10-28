@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../services/emergency_alarm_player.dart';
+
 class EmergenciaScreen extends StatefulWidget {
   final String message;
   final DateTime expiresAt;
@@ -9,6 +11,8 @@ class EmergenciaScreen extends StatefulWidget {
   final VoidCallback onCancel;
   final bool cancelling;
   final String? error;
+  final Future<bool> Function()? canResumeAlarm;
+  final EmergencyAlarmPlayer? alarmPlayer;
 
   const EmergenciaScreen({
     super.key,
@@ -18,26 +22,96 @@ class EmergenciaScreen extends StatefulWidget {
     required this.onCancel,
     this.cancelling = false,
     this.error,
+    this.canResumeAlarm,
+    this.alarmPlayer,
   });
 
   @override
   State<EmergenciaScreen> createState() => _EmergenciaScreenState();
 }
 
-class _EmergenciaScreenState extends State<EmergenciaScreen> {
+class _EmergenciaScreenState extends State<EmergenciaScreen>
+    with WidgetsBindingObserver {
+  late final EmergencyAlarmPlayer _alarm;
   Timer? _countdown;
   int _secondsRemaining = 0;
+  bool _foreground = false;
+  bool _audioError = false;
+  bool _disposing = false;
+  bool _resumePending = false;
+  int _lifecycleGeneration = 0;
+  int? _resumeCheckGeneration;
 
   @override
   void initState() {
     super.initState();
+    _alarm = widget.alarmPlayer ??
+        EmergencyAlarmPlayer(onError: (_) {
+          if (mounted && !_disposing && !_audioError) {
+            setState(() => _audioError = true);
+          }
+        });
+    WidgetsBinding.instance.addObserver(this);
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _foreground = lifecycle == null || lifecycle == AppLifecycleState.resumed;
     _startCountdown();
+    if (_foreground) unawaited(_alarm.playUntil(widget.expiresAt));
   }
 
   @override
   void didUpdateWidget(covariant EmergenciaScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.expiresAt != widget.expiresAt) _startCountdown();
+    if (oldWidget.expiresAt != widget.expiresAt) {
+      _startCountdown();
+      if (_foreground && !_resumePending) {
+        unawaited(_alarm.playUntil(widget.expiresAt));
+      }
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final foreground = state == AppLifecycleState.resumed;
+    if (_disposing || _foreground == foreground) return;
+    _foreground = foreground;
+    _lifecycleGeneration++;
+    _resumePending = _foreground;
+    if (_foreground) {
+      unawaited(_confirmResumeAlarm());
+    } else {
+      unawaited(_alarm.stop());
+    }
+  }
+
+  Future<void> _confirmResumeAlarm() async {
+    final generation = _lifecycleGeneration;
+    if (!mounted ||
+        _disposing ||
+        !_foreground ||
+        !_resumePending ||
+        _remainingSeconds() == 0 ||
+        _resumeCheckGeneration == generation) {
+      return;
+    }
+    _resumeCheckGeneration = generation;
+    try {
+      final authorize = widget.canResumeAlarm;
+      final allowed = authorize == null || await authorize();
+      if (!mounted ||
+          _disposing ||
+          !_foreground ||
+          generation != _lifecycleGeneration ||
+          !allowed ||
+          _remainingSeconds() == 0) {
+        return;
+      }
+      _resumePending = false;
+      unawaited(_alarm.playUntil(widget.expiresAt));
+    } catch (_) {
+      // Reintentar sin reproducir una alerta cuya vigencia no se confirmó.
+    } finally {
+      if (_resumeCheckGeneration == generation) _resumeCheckGeneration = null;
+    }
   }
 
   void _startCountdown() {
@@ -49,6 +123,7 @@ class _EmergenciaScreenState extends State<EmergenciaScreen> {
       if (remaining != _secondsRemaining && mounted) {
         setState(() => _secondsRemaining = remaining);
       }
+      if (remaining > 0 && _resumePending) unawaited(_confirmResumeAlarm());
       if (remaining == 0) timer.cancel();
     });
   }
@@ -61,7 +136,13 @@ class _EmergenciaScreenState extends State<EmergenciaScreen> {
 
   @override
   void dispose() {
+    _disposing = true;
+    _foreground = false;
+    _lifecycleGeneration++;
+    _resumePending = false;
+    WidgetsBinding.instance.removeObserver(this);
     _countdown?.cancel();
+    unawaited(_alarm.dispose());
     super.dispose();
   }
 
@@ -154,6 +235,14 @@ class _EmergenciaScreenState extends State<EmergenciaScreen> {
                           textAlign: TextAlign.center,
                           style: TextStyle(color: Colors.white, fontSize: 14),
                         ),
+                        if (_audioError) ...[
+                          const SizedBox(height: 12),
+                          const Text(
+                            'No se pudo reproducir la alarma de emergencia.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white, fontSize: 14),
+                          ),
+                        ],
                         if (widget.isConserje) ...[
                           const SizedBox(height: 32),
                           SizedBox(
@@ -198,12 +287,6 @@ class _EmergenciaScreenState extends State<EmergenciaScreen> {
                                           fontWeight: FontWeight.bold),
                                     ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          const Text(
-                            'La cancelación cerrará esta pantalla para todos los usuarios.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white, fontSize: 14),
                           ),
                           if (widget.error != null &&
                               widget.error!.isNotEmpty) ...[

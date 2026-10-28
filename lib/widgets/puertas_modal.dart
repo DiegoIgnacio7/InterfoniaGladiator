@@ -10,8 +10,14 @@ class PuertasModal extends StatefulWidget {
   static const String registrosEndpoint = '$kBaseUrl/api/puertas';
   final String miRut;
   final http.Client? client;
+  final bool soloApertura;
 
-  const PuertasModal({super.key, required this.miRut, this.client});
+  const PuertasModal({
+    super.key,
+    required this.miRut,
+    this.client,
+    this.soloApertura = false,
+  });
 
   @override
   State<PuertasModal> createState() => _PuertasModalState();
@@ -26,6 +32,10 @@ class _PuertasModalState extends State<PuertasModal> {
   int? _enviandoPuerta;
   String? _error;
   List<Map<String, dynamic>> _registros = [];
+
+  bool get _mostrarReporte => _esAdmin == true && !widget.soloApertura;
+  bool get _puedeAbrirPuertas =>
+      _esAdmin == false || (_esAdmin == true && widget.soloApertura);
 
   @override
   void initState() {
@@ -62,7 +72,7 @@ class _PuertasModalState extends State<PuertasModal> {
         _error = null;
       });
       _timer?.cancel();
-      if (_esAdmin == true) {
+      if (_mostrarReporte) {
         _timer = Timer.periodic(
             const Duration(seconds: 10), (_) => _cargarRegistros());
         await _cargarRegistros();
@@ -96,7 +106,7 @@ class _PuertasModalState extends State<PuertasModal> {
   }
 
   Future<void> _cargarRegistros() async {
-    if (!mounted || _esAdmin != true || _consultando) return;
+    if (!mounted || !_mostrarReporte || _consultando) return;
     setState(() => _consultando = true);
     try {
       final response = await _client
@@ -125,11 +135,11 @@ class _PuertasModalState extends State<PuertasModal> {
   }
 
   Future<void> _registrarPuerta(int puerta) async {
-    if (_esAdmin != false || _enviandoPuerta != null) return;
+    if (!_puedeAbrirPuertas || _enviandoPuerta != null) return;
     setState(() => _enviandoPuerta = puerta);
     String mensaje;
     try {
-      // Este endpoint solo guarda el registro de la pulsación.
+      // El endpoint registra la solicitud y envía la orden de apertura.
       final response = await _client
           .post(
             Uri.parse(PuertasModal.abrirPuertaEndpoint),
@@ -233,7 +243,7 @@ class _PuertasModalState extends State<PuertasModal> {
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
-      initialChildSize: _esAdmin == true ? 0.75 : 0.55,
+      initialChildSize: _mostrarReporte ? 0.75 : 0.55,
       minChildSize: 0.3,
       maxChildSize: 0.9,
       expand: false,
@@ -263,13 +273,13 @@ class _PuertasModalState extends State<PuertasModal> {
                 children: [
                   Expanded(
                     child: Text(
-                        _esAdmin == true ? 'Reporte de puertas' : 'Puertas',
+                        _mostrarReporte ? 'Reporte de puertas' : 'Puertas',
                         style: const TextStyle(
                             color: Colors.white,
                             fontSize: 18,
                             fontWeight: FontWeight.w300)),
                   ),
-                  if (_esAdmin == true)
+                  if (_mostrarReporte)
                     IconButton(
                       tooltip: 'Actualizar registros',
                       icon:
@@ -297,12 +307,12 @@ class _PuertasModalState extends State<PuertasModal> {
                 ),
                 const SizedBox(height: 12),
               ],
-              if (_esAdmin == false) ...[
+              if (_puedeAbrirPuertas) ...[
                 _botonPuerta(1),
                 const SizedBox(height: 14),
                 _botonPuerta(2),
               ],
-              if (_esAdmin == true) ...[
+              if (_mostrarReporte) ...[
                 if (_registros.isEmpty && !_consultando && _error == null)
                   const Text('No hay registros de puertas.',
                       style: TextStyle(color: Colors.grey),

@@ -12,9 +12,11 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <Preferences.h>
+#define ARDUINOJSON_USE_LONG_LONG 1
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <string.h>
 
 #define I2S_SD       10
 #define I2S_WS       11
@@ -29,8 +31,8 @@
 // === BOTONES FÍSICOS Y LED ===
 #define BUTTON_PIN     1      // GPIO 1 conectado al botón principal (a GND)
 #define BUTTON_PIN_2   2      // GPIO 2 conectado al botón de alerta (a GND)
-#define DOOR_BUTTON_1  21      // GPIO 21 conectado al botón de Apertura Puerta 1 (a GND)
-#define DOOR_BUTTON_2  20      // GPIO 20 conectado al botón de Apertura Puerta 2 (a GND)
+#define DOOR_BUTTON_1  4      // GPIO 4 conectado al botón de Apertura Puerta 1 (a GND)
+#define DOOR_BUTTON_2  5      // GPIO 5 conectado al botón de Apertura Puerta 2 (a GND)
 #define LED_NOTICE_PIN 19      // GPIO 19 conectado al LED indicador de aviso
 
 // Variables para el control del LED (Enclavado y Parpadeo)
@@ -59,12 +61,12 @@ bool ledBlinkState = false;
 #define RX_TARGET_BUFFER_BYTES (RX_FRAME_BYTES * 4)
 #define RX_TRIM_BUFFER_BYTES   (RX_FRAME_BYTES * 6)
 
-const char* DEFAULT_WIFI_SSID = "neneduende";
-const char* DEFAULT_WIFI_PASS = "hola12345";
+const char* DEFAULT_WIFI_SSID = "Wifi_Mesh-8390ACB7";
+const char* DEFAULT_WIFI_PASS = "aGUzw6nR";
 
 // === CONFIGURACIÓN DE MÚLTIPLES REDES (FAILOVER) ===
-const char* ssid_list[] = {"neneduende", "Wifi_Mesh-8390ACB7"};
-const char* password_list[] = {"hola12345", "aGUzw6nR"};
+const char* ssid_list[] = {"Wifi_Mesh-8390ACB7", "neneduende", "AndroidAP_5939"};
+const char* password_list[] = {"aGUzw6nR", "hola12345", "7c85f8205823"};
 const int total_networks = 2;
 const unsigned long wifi_timeout = 10000; // Tiempo máximo por red (10 segundos)
 
@@ -80,17 +82,18 @@ const char* WS_RX_URL = "ws://209.46.126.62:6666/esp32_rx";
 // Configuración Backend Alerta Chat
 const char* BACKEND_HOST  = "209.46.126.62";
 const int   BACKEND_PORT  = 6666;
-const char* DEVICE_RUT    = "21212121";
+const char* DEVICE_RUT    = "99999999";
 
 const char* CALL_TARGET_RUT = "11111111";
 const char* CALLER_RUT = DEVICE_RUT;
-const char* CALLER_DPTO = "Citofono #2";
+const char* CALLER_DPTO = "Citofono #1";
 const char* HISTORY_RUT = DEVICE_RUT;
-const char* ESP32_DEVICE_ID = "citofono-2";
+const char* ESP32_DEVICE_ID = "citofono-1";
 
 #define HTTP_TIMEOUT_MS 6000
 #define WS_RECONNECT_MS 2000
 #define ESP32_POLL_MS 500
+#define EMERGENCIA_POLL_MS 2000
 
 using namespace websockets;
 
@@ -114,6 +117,7 @@ unsigned long lastRxReconnectAttempt = 0;
 unsigned long lastStats = 0;
 unsigned long callStartedAt = 0;
 unsigned long lastEsp32Poll = 0;
+unsigned long lastEmergenciaPoll = 0;
 
 uint8_t rxRing[RX_RING_SIZE];
 volatile size_t rxHead = 0;
@@ -146,6 +150,7 @@ void handlePendingWiFiReconnect();
 bool handleWifiCommand(String line);
 void processButtonOrCmdLine(String line);
 void pollBackendCallState();
+void pollBackendEmergencyState();
 
 // === RECEPCIÓN DE AVISOS DESDE LA APP ===
 const bool RX_AVISOS_EN_REPOSO = true;
@@ -154,6 +159,93 @@ const char AVISO_APP_PREFIX[] = "[AVISO APP CITOFONIA] ";
 portMUX_TYPE avisoMux = portMUX_INITIALIZER_UNLOCKED;
 bool avisoLedPendiente = false;
 bool avisoTonoPendiente = false;
+
+// Estado independiente: los avisos normales nunca activan el timbre de emergencia.
+const char EMERGENCIA_APP_PREFIX[] = "[EMERGENCIA APP CITOFONIA] ";
+portMUX_TYPE emergenciaMux = portMUX_INITIALIZER_UNLOCKED;
+bool emergenciaActiva = false;
+char emergenciaId[65] = "";
+int64_t emergenciaRevision = -1;
+uint32_t emergenciaDeadline = 0;
+uint32_t emergenciaGeneracion = 0;
+
+bool emergenciaEnCurso(uint32_t* generacion) {
+  const uint32_t ahora = (uint32_t)millis();
+  portENTER_CRITICAL(&emergenciaMux);
+  // La diferencia con signo sigue siendo válida al desbordar millis().
+  if (emergenciaActiva && (int32_t)(ahora - emergenciaDeadline) >= 0) {
+    emergenciaActiva = false;
+    emergenciaGeneracion++;
+  }
+  bool activa = emergenciaActiva;
+  if (generacion != nullptr) *generacion = emergenciaGeneracion;
+  portEXIT_CRITICAL(&emergenciaMux);
+  return activa;
+}
+
+bool aplicarEstadoEmergencia(JsonObjectConst estado, uint32_t demoraMs) {
+  if (!estado["type"].is<const char*>() ||
+      strcmp(estado["type"].as<const char*>(), "emergency") != 0 ||
+      !estado["active"].is<bool>() || !estado["revision"].is<int64_t>() ||
+      !estado["remaining_ms"].is<uint32_t>()) return false;
+
+  const bool solicitada = estado["active"].as<bool>();
+  const int64_t revision = estado["revision"].as<int64_t>();
+  const char* id = estado["id"].is<const char*>() ? estado["id"].as<const char*>() : "";
+  const size_t longitudId = strlen(id);
+  if (revision < 0 || longitudId >= sizeof(emergenciaId) ||
+      (solicitada && longitudId == 0)) return false;
+
+  uint32_t restante = estado["remaining_ms"].as<uint32_t>();
+  if (restante > 60000UL) restante = 60000UL;
+  // Una respuesta HTTP demorada no extiende la vigencia indicada por el servidor.
+  restante = restante > demoraMs ? restante - demoraMs : 0;
+  const uint32_t ahora = (uint32_t)millis();
+
+  portENTER_CRITICAL(&emergenciaMux);
+  if (emergenciaActiva && (int32_t)(ahora - emergenciaDeadline) >= 0) {
+    emergenciaActiva = false;
+    emergenciaGeneracion++;
+  }
+  const bool mismoId = strcmp(emergenciaId, id) == 0;
+  if (revision < emergenciaRevision || (revision == emergenciaRevision && !mismoId)) {
+    portEXIT_CRITICAL(&emergenciaMux);
+    return false;
+  }
+
+  const bool estabaActiva = emergenciaActiva;
+  if (solicitada && restante > 0) {
+    const uint32_t candidata = ahora + restante;
+    if (!mismoId) {
+      emergenciaActiva = true;
+      emergenciaDeadline = candidata;
+    } else if (emergenciaActiva && (int32_t)(candidata - emergenciaDeadline) < 0) {
+      // Duplicados y consultas pueden acortar, pero nunca alargar el plazo.
+      emergenciaDeadline = candidata;
+    }
+    // El mismo ID ya cerrado o vencido se conserva como marca de cierre.
+  } else {
+    emergenciaActiva = false;
+  }
+  if (estabaActiva != emergenciaActiva || (!mismoId && emergenciaActiva)) {
+    emergenciaGeneracion++;
+  }
+  memcpy(emergenciaId, id, longitudId + 1);
+  emergenciaRevision = revision;
+  portEXIT_CRITICAL(&emergenciaMux);
+  return true;
+}
+
+void recibirEstadoEmergenciaJSON(const String& payload, uint32_t demoraMs) {
+  StaticJsonDocument<768> doc;
+  if (deserializeJson(doc, payload)) return;
+  JsonObjectConst estado = doc.as<JsonObjectConst>();
+  if (doc["emergencia"].is<JsonObjectConst>()) {
+    if (!doc["success"].is<bool>() || !doc["success"].as<bool>()) return;
+    estado = doc["emergencia"].as<JsonObjectConst>();
+  }
+  aplicarEstadoEmergencia(estado, demoraMs);
+}
 
 // Controla la activación del LED enclavado al recibir aviso
 void manejarAvisoPendiente() {
@@ -388,6 +480,16 @@ bool getPath(const String &path, String &response, int &statusCode) {
   return httpRequest(String(BACKEND_BASE_URL) + path, "GET", "", response, statusCode);
 }
 
+void pollBackendEmergencyState() {
+  if (!isNetworkConnected()) return;
+  const uint32_t inicio = (uint32_t)millis();
+  String response;
+  int code = 0;
+  if (getPath("/api/emergencias/estado?formato=esp32", response, code)) {
+    recibirEstadoEmergenciaJSON(response, (uint32_t)millis() - inicio);
+  }
+}
+
 String getActiveWifiSsid() {
   if (wifiSsid.length() > 0) return wifiSsid;
   return String(DEFAULT_WIFI_SSID);
@@ -596,7 +698,9 @@ void onRxMessageCallback(WebsocketsMessage message) {
   if (message.isText()) {
     String texto = message.data();
 
-    if (texto.startsWith(AVISO_APP_PREFIX)) {
+    if (texto.startsWith(EMERGENCIA_APP_PREFIX)) {
+      recibirEstadoEmergenciaJSON(texto.substring(sizeof(EMERGENCIA_APP_PREFIX) - 1), 0);
+    } else if (texto.startsWith(AVISO_APP_PREFIX)) {
       portENTER_CRITICAL(&avisoMux);
       avisoLedPendiente = true;
       avisoTonoPendiente = true;
@@ -623,6 +727,7 @@ void onRxMessageCallback(WebsocketsMessage message) {
     Serial.println("[CALL] LLAMADA ACTIVA CONECTADA");
   }
   wsRxBytes += raw.size();
+  if (emergenciaEnCurso(nullptr)) return; // La voz sigue llegando, sin acumularla durante la sirena.
   ringPushKeepNewestAligned((const uint8_t*)raw.data(), raw.size());
 }
 
@@ -862,6 +967,22 @@ void writeIncomingRingToneFrame() {
   if (err == ESP_OK) dacWrittenBytes += written;
 }
 
+// Timbre exclusivo de emergencia: 500 ms de tono y 250 ms de pausa.
+void writeEmergencyRingToneFrame() {
+  static uint32_t sampleCounter = 0;
+  bool toneOn = (millis() % 750UL) < 500UL;
+  for (int i = 0; i < RX_DAC_SAMPLES; i++) {
+    int16_t sample = 0;
+    if (toneOn) sample = ((sampleCounter / 18) % 2 == 0) ? RING_TONE_AMPLITUDE : -RING_TONE_AMPLITUDE;
+    sampleCounter++;
+    dacStereoFrame[i * 2 + 0] = sample;
+    dacStereoFrame[i * 2 + 1] = sample;
+  }
+  size_t written = 0;
+  esp_err_t err = i2s_write(I2S_PORT, dacStereoFrame, sizeof(dacStereoFrame), &written, pdMS_TO_TICKS(6));
+  if (err == ESP_OK) dacWrittenBytes += written;
+}
+
 // === TONO SUAVE Y AGRADABLE PARA BOTÓN LLAMADA (GPIO 1) ===
 void playCallBeep() {
   for (int b = 0; b < 12; b++) {
@@ -891,10 +1012,28 @@ void playMessageBeep() {
 void audioPlaybackTask(void* parameter) {
   (void)parameter;
   bool primed = false;
+  bool emergenciaSonando = false;
+  uint32_t generacionReproducida = 0;
   const TickType_t framePeriod = pdMS_TO_TICKS(20);
   TickType_t lastWake = xTaskGetTickCount();
 
   for (;;) {
+    uint32_t generacion = 0;
+    const bool reproducirEmergencia = emergenciaEnCurso(&generacion);
+    if (reproducirEmergencia != emergenciaSonando || generacion != generacionReproducida) {
+      ringClear();
+      i2s_zero_dma_buffer(I2S_PORT);
+      primed = false;
+      emergenciaSonando = reproducirEmergencia;
+      generacionReproducida = generacion;
+      lastWake = xTaskGetTickCount();
+    }
+    if (reproducirEmergencia) {
+      writeEmergencyRingToneFrame();
+      vTaskDelayUntil(&lastWake, framePeriod);
+      continue;
+    }
+
     bool emitirTonoAviso = false;
 
     if (!callWanted && !callActive && !incomingRinging) {
@@ -1058,6 +1197,11 @@ void backendPollTask(void* parameter) {
   for (;;) {
     if (isNetworkConnected()) {
       unsigned long now = millis();
+      if (now - lastEmergenciaPoll >= EMERGENCIA_POLL_MS) {
+        lastEmergenciaPoll = now;
+        pollBackendEmergencyState();
+        now = millis();
+      }
       if (now - lastEsp32Poll >= ESP32_POLL_MS) {
         lastEsp32Poll = now;
         pollBackendCallState();
@@ -1422,8 +1566,8 @@ void checkDoorButtons() {
 
 // === GESTIÓN DEL LED (PARPADEO AL LLAMAR, BUSCANDO RED O FIJO SI ESTÁ ENCLAVADO) ===
 void handleLedControl() {
-  // 1. Prioridad: Parpadeo si hay llamada activa o llamando
-  if (callWanted) {
+  // 1. Prioridad: Parpadeo durante llamadas entrantes, salientes o activas
+  if (callWanted || incomingRinging) {
     if (millis() - lastLedBlinkTime >= 500) {
       lastLedBlinkTime = millis();
       ledBlinkState = !ledBlinkState;
@@ -1442,8 +1586,8 @@ void handleLedControl() {
     return;
   }
 
-  // 3. Si está enclavado por un aviso enviado o recibido, se queda encendido fijo
-  if (ledEnclavado) {
+  // 3. La emergencia ilumina mientras esté vigente; los avisos conservan su enclavamiento.
+  if (emergenciaEnCurso(nullptr) || ledEnclavado) {
     digitalWrite(LED_NOTICE_PIN, HIGH);
     return;
   }

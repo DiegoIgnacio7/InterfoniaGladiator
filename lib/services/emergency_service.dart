@@ -43,7 +43,7 @@ class EmergencyService extends ChangeNotifier {
   EmergencyState? _current;
   String? _error;
   bool _cancelling = false;
-  bool _syncing = false;
+  Future<void>? _syncInFlight;
   bool _disposed = false;
   int _generation = 0;
   int _revision = -1;
@@ -127,7 +127,7 @@ class EmergencyService extends ChangeNotifier {
     _current = null;
     _error = null;
     _cancelling = false;
-    _syncing = false;
+    _syncInFlight = null;
     _revision = -1;
     _serverActive = null;
     _eventId = null;
@@ -135,10 +135,21 @@ class EmergencyService extends ChangeNotifier {
     _generation++;
   }
 
-  Future<void> sync() async {
-    if (!_attached || _syncing) return;
+  Future<void> sync() {
+    if (!_attached) return Future<void>.value();
+    if (_syncInFlight != null) return _syncInFlight!;
     final generation = _generation;
-    _syncing = true;
+    late final Future<void> request;
+    request = _syncState(generation).whenComplete(() {
+      if (_isCurrentSession(generation) && identical(_syncInFlight, request)) {
+        _syncInFlight = null;
+      }
+    });
+    _syncInFlight = request;
+    return request;
+  }
+
+  Future<void> _syncState(int generation) async {
     try {
       final response = await _client
           .get(Uri.parse('$kBaseUrl/api/emergencias/estado'))
@@ -152,8 +163,6 @@ class EmergencyService extends ChangeNotifier {
             'Se volverá a intentar.';
         notifyListeners();
       }
-    } finally {
-      if (_isCurrentSession(generation)) _syncing = false;
     }
   }
 

@@ -325,6 +325,11 @@ class _CitofonoAppState extends State<CitofonoApp>
                     cancelling: _emergency.cancelling,
                     error: _emergency.error,
                     onCancel: () => unawaited(_emergency.cancel()),
+                    canResumeAlarm: () async {
+                      await _emergency.sync();
+                      return _emergency.current?.id == emergency.id &&
+                          _emergency.error == null;
+                    },
                   ),
                 ),
             ],
